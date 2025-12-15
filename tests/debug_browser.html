@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Browser SR</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1a1a2e; color: #eee; }
+        pre { background: #16213e; padding: 15px; border-radius: 8px; overflow-x: auto; }
+        .success { color: #4ade80; }
+        .error { color: #f87171; }
+        canvas { border: 1px solid #444; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Debug: Browser SR Pipeline</h1>
+    <pre id="log"></pre>
+    <div id="canvases"></div>
+
+    <script>
+        const log = document.getElementById('log');
+        function print(msg, type = '') {
+            log.innerHTML += `<span class="${type}">${msg}</span>\n`;
+            console.log(msg);
+        }
+
+        async function debug() {
+            print('=== Browser SR Debug ===\n');
+
+            // Create same test image as Python (random with seed simulation)
+            const size = 64;
+            const testData = new Float32Array(size * size * 3);
+            
+            // Simple deterministic pattern instead of random
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const idx = (y * size + x) * 3;
+                    testData[idx] = (x / size);     // R: gradient
+                    testData[idx+1] = (y / size);   // G: gradient  
+                    testData[idx+2] = 0.5;          // B: constant
+                }
+            }
+
+            // Draw input
+            const inputCanvas = document.createElement('canvas');
+            inputCanvas.width = inputCanvas.height = size;
+            const ctx = inputCanvas.getContext('2d');
+            const imgData = ctx.createImageData(size, size);
+            for (let i = 0; i < size * size; i++) {
+                imgData.data[i*4] = Math.round(testData[i*3] * 255);
+                imgData.data[i*4+1] = Math.round(testData[i*3+1] * 255);
+                imgData.data[i*4+2] = Math.round(testData[i*3+2] * 255);
+                imgData.data[i*4+3] = 255;
+            }
+            ctx.putImageData(imgData, 0, 0);
+            document.getElementById('canvases').appendChild(inputCanvas);
+
+            // Convert to tensor [1, 3, H, W] - NCHW format
+            print(`Input image: ${size}x${size}`);
+            print(`Sample input pixels (RGB, 0-1 range):`);
+            print(`  [0,0]: R=${testData[0].toFixed(4)}, G=${testData[1].toFixed(4)}, B=${testData[2].toFixed(4)}`);
+            print(`  [32,32]: R=${testData[(32*64+32)*3].toFixed(4)}, G=${testData[(32*64+32)*3+1].toFixed(4)}, B=${testData[(32*64+32)*3+2].toFixed(4)}`);
+
+            // Create NCHW tensor
+            const tensorData = new Float32Array(1 * 3 * size * size);
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const srcIdx = (y * size + x) * 3;
+                    const dstIdx = y * size + x;
+                    tensorData[0 * size * size + dstIdx] = testData[srcIdx];     // R channel
+                    tensorData[1 * size * size + dstIdx] = testData[srcIdx + 1]; // G channel
+                    tensorData[2 * size * size + dstIdx] = testData[srcIdx + 2]; // B channel
+                }
+            }
+
+            print(`\nTensor shape: [1, 3, ${size}, ${size}]`);
+            print(`Tensor sample values:`);
+            const centerIdx = 32 * size + 32;
+            print(`  R[32,32] = ${tensorData[0 * size * size + centerIdx].toFixed(4)}`);
+            print(`  G[32,32] = ${tensorData[1 * size * size + centerIdx].toFixed(4)}`);
+            print(`  B[32,32] = ${tensorData[2 * size * size + centerIdx].toFixed(4)}`);
+
+            // Load ONNX model
+            print('\nLoading ONNX model...');
+            try {
+                const session = await ort.InferenceSession.create('./models/super_res.onnx?' + Date.now(), {
+                    executionProviders: ['wasm']
+                });
+                print('Model loaded!', 'success');
+                print(`  Input name: ${session.inputNames[0]}`);
+                print(`  Output name: ${session.outputNames[0]}`);
+
+                // Run inference
+                print('\nRunning inference...');
+                const inputTensor = new ort.Tensor('float32', tensorData, [1, 3, size, size]);
+                const feeds = { [session.inputNames[0]]: inputTensor };
+                const results = await session.run(feeds);
+                const outputTensor = results[session.outputNames[0]];
+
+                print(`Output shape: [${outputTensor.dims.join(', ')}]`, 'success');
+                const outH = outputTensor.dims[2];
+                const outW = outputTensor.dims[3];
+                const outData = outputTensor.data;
+
+                // Check output range
+                let minVal = Infinity, maxVal = -Infinity;
+                for (let i = 0; i < outData.length; i++) {
+                    minVal = Math.min(minVal, outData[i]);
+                    maxVal = Math.max(maxVal, outData[i]);
+                }
+                print(`Output range: [${minVal.toFixed(4)}, ${maxVal.toFixed(4)}]`);
+
+                // Sample output pixel at center (should be 4x the input center)
+                const outCenterIdx = 128 * outW + 128;
+                print(`\nOutput sample [128,128]:`);
+                print(`  R = ${outData[0 * outH * outW + outCenterIdx].toFixed(4)}`);
+                print(`  G = ${outData[1 * outH * outW + outCenterIdx].toFixed(4)}`);
+                print(`  B = ${outData[2 * outH * outW + outCenterIdx].toFixed(4)}`);
+
+                // Draw output
+                const outputCanvas = document.createElement('canvas');
+                outputCanvas.width = outW;
+                outputCanvas.height = outH;
+                const outCtx = outputCanvas.getContext('2d');
+                const outImgData = outCtx.createImageData(outW, outH);
+                
+                for (let y = 0; y < outH; y++) {
+                    for (let x = 0; x < outW; x++) {
+                        const tensorIdx = y * outW + x;
+                        const pixelIdx = tensorIdx * 4;
+                        outImgData.data[pixelIdx] = Math.round(Math.max(0, Math.min(255, outData[0 * outH * outW + tensorIdx] * 255)));
+                        outImgData.data[pixelIdx+1] = Math.round(Math.max(0, Math.min(255, outData[1 * outH * outW + tensorIdx] * 255)));
+                        outImgData.data[pixelIdx+2] = Math.round(Math.max(0, Math.min(255, outData[2 * outH * outW + tensorIdx] * 255)));
+                        outImgData.data[pixelIdx+3] = 255;
+                    }
+                }
+                outCtx.putImageData(outImgData, 0, 0);
+                document.getElementById('canvases').appendChild(outputCanvas);
+
+                print('\n✓ Debug complete! Check canvases above.', 'success');
+
+            } catch (e) {
+                print(`Error: ${e.message}`, 'error');
+                console.error(e);
+            }
+        }
+
+        debug();
+    </script>
+</body>
+</html>
+

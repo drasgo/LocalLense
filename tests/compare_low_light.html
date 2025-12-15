@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Low-Light Model Comparison: FLOL vs LYT-Net</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+    <style>
+        body { 
+            font-family: system-ui; 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            background: #1a1a2e; 
+            color: #fff; 
+        }
+        h1 { color: #00d4ff; text-align: center; }
+        h2 { color: #a855f7; margin-top: 30px; }
+        .controls { 
+            display: flex; 
+            gap: 10px; 
+            margin: 20px 0; 
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        button { 
+            background: linear-gradient(135deg, #0ea5e9, #a855f7); 
+            color: #fff; 
+            border: none; 
+            padding: 12px 24px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            font-weight: bold;
+        }
+        button:hover { opacity: 0.9; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .comparison { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            gap: 20px; 
+            margin: 20px 0;
+        }
+        .image-box { 
+            background: #2a2a4a; 
+            border-radius: 12px; 
+            padding: 15px;
+            text-align: center;
+        }
+        .image-box h3 { margin: 0 0 10px 0; font-size: 14px; }
+        .image-box canvas { 
+            max-width: 100%; 
+            border: 2px solid #333; 
+            background: #000; 
+            border-radius: 8px;
+        }
+        .stats { 
+            margin-top: 10px; 
+            font-size: 12px; 
+            color: #94a3b8;
+        }
+        .stats .highlight { color: #4ade80; font-weight: bold; }
+        .stats .value { color: #fbbf24; }
+        #status { 
+            padding: 15px; 
+            background: #2a2a4a; 
+            border-radius: 8px; 
+            margin: 20px 0; 
+            text-align: center;
+        }
+        .success { color: #4ade80; }
+        .error { color: #f87171; }
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: #2a2a4a;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .results-table th, .results-table td {
+            padding: 12px;
+            text-align: center;
+            border-bottom: 1px solid #3a3a5a;
+        }
+        .results-table th { background: #3a3a5a; color: #00d4ff; }
+        .winner { background: rgba(74, 222, 128, 0.2); }
+        input[type="file"] { margin: 10px; }
+    </style>
+</head>
+<body>
+    <h1>🌙 Low-Light Enhancement: FLOL vs LYT-Net vs IAT vs SCI</h1>
+    
+    <div class="controls">
+        <button onclick="createDarkTestImage()">Create Dark Test Image</button>
+        <button onclick="loadRealDarkImage()">Load Real Dark Image</button>
+        <input type="file" id="fileInput" accept="image/*" onchange="loadCustomImage(event)">
+        <button onclick="runComparison()" id="runBtn" disabled>Run Comparison</button>
+    </div>
+    
+    <div id="status">Loading models...</div>
+    
+    <div class="comparison" style="grid-template-columns: repeat(5, 1fr);">
+        <div class="image-box">
+            <h3>📷 Input (Dark Image)</h3>
+            <canvas id="inputCanvas" width="256" height="256"></canvas>
+            <div class="stats" id="inputStats"></div>
+        </div>
+        <div class="image-box">
+            <h3>🔧 FLOL Output</h3>
+            <canvas id="flolCanvas" width="256" height="256"></canvas>
+            <div class="stats" id="flolStats"></div>
+        </div>
+        <div class="image-box">
+            <h3>✨ LYT-Net Output</h3>
+            <canvas id="lytCanvas" width="256" height="256"></canvas>
+            <div class="stats" id="lytStats"></div>
+        </div>
+        <div class="image-box">
+            <h3>⚡ IAT Output</h3>
+            <canvas id="iatCanvas" width="256" height="256"></canvas>
+            <div class="stats" id="iatStats"></div>
+        </div>
+        <div class="image-box">
+            <h3>🌟 SCI Output</h3>
+            <canvas id="sciCanvas" width="256" height="256"></canvas>
+            <div class="stats" id="sciStats"></div>
+        </div>
+    </div>
+    
+    <h2>📊 Results Summary</h2>
+    <table class="results-table" id="resultsTable">
+        <tr>
+            <th>Metric</th>
+            <th>FLOL</th>
+            <th>LYT-Net</th>
+            <th>IAT</th>
+            <th>SCI</th>
+            <th>Winner</th>
+        </tr>
+        <tr>
+            <td>Model Size</td>
+            <td id="flolSize">-</td>
+            <td id="lytSize">-</td>
+            <td id="iatSize">-</td>
+            <td id="sciSize">-</td>
+            <td id="sizeWinner">-</td>
+        </tr>
+        <tr>
+            <td>Inference Time</td>
+            <td id="flolTime">-</td>
+            <td id="lytTime">-</td>
+            <td id="iatTime">-</td>
+            <td id="sciTime">-</td>
+            <td id="timeWinner">-</td>
+        </tr>
+        <tr>
+            <td>Brightness Boost</td>
+            <td id="flolBrightness">-</td>
+            <td id="lytBrightness">-</td>
+            <td id="iatBrightness">-</td>
+            <td id="sciBrightness">-</td>
+            <td id="brightnessWinner">-</td>
+        </tr>
+        <tr>
+            <td>Dynamic Range</td>
+            <td id="flolDynamic">-</td>
+            <td id="lytDynamic">-</td>
+            <td id="iatDynamic">-</td>
+            <td id="sciDynamic">-</td>
+            <td id="dynamicWinner">-</td>
+        </tr>
+    </table>
+
+    <script>
+        let flolSession = null;
+        let lytSession = null;
+        let iatSession = null;
+        let sciSession = null;
+        let inputImage = null;
+        ort.env.wasm.simd = true;
+        ort.env.wasm.numThreads = navigator.hardwareConcurrency;
+
+        function getExecutionProvider(session) {
+            try {
+                const backend = session?.handler?.session?.sessionHandler?.backend;
+                if (backend) {
+                    if (backend.glContext) return 'WebGL';
+                    if (backend.device) return 'WebGPU';
+                }
+                return 'WASM';
+            } catch (e) {
+                return 'WASM';
+            }
+        }
+        
+        async function loadModels() {
+            const status = document.getElementById('status');
+            const runBtn = document.getElementById('runBtn');
+            
+            try {
+                status.textContent = 'Loading FLOL model...';
+                const flolStart = performance.now();
+                flolSession = await ort.InferenceSession.create('../models/low_light.onnx?v=' + Math.random(), {
+                    executionProviders: ['wasm']
+                });
+                const flolLoadTime = (performance.now() - flolStart).toFixed(0);
+                
+                status.textContent = 'Loading LYT-Net model...';
+                const lytStart = performance.now();
+                // Use WASM for LYT-Net - full dynamic axes support
+                lytSession = await ort.InferenceSession.create('../models/low_light_lyt.onnx?v=' + Math.random(), {
+                    executionProviders: ['wasm']
+                });
+                const lytLoadTime = (performance.now() - lytStart).toFixed(0);
+
+                status.textContent = 'Loading IAT model...';
+                const iatStart = performance.now();
+                iatSession = await ort.InferenceSession.create('../models/low_light_iat.onnx?v=' + Math.random(), {
+                    executionProviders: ['wasm']
+                });
+                const iatLoadTime = (performance.now() - iatStart).toFixed(0);
+
+                status.textContent = 'Loading SCI model...';
+                const sciStart = performance.now();
+                sciSession = await ort.InferenceSession.create('../models/low_light_sci.onnx?v=' + Math.random(), {
+                    executionProviders: ['wasm']
+                });
+                const sciLoadTime = (performance.now() - sciStart).toFixed(0);
+                
+                // Get execution providers used
+                const flolEP = getExecutionProvider(flolSession);
+                const lytEP = getExecutionProvider(lytSession);
+                const iatEP = getExecutionProvider(iatSession);
+                const sciEP = getExecutionProvider(sciSession);
+                
+                status.innerHTML = `<span class="success">✓ Models loaded!</span><br>` +
+                    `FLOL: ${flolLoadTime}ms (${flolEP})<br>` +
+                    `LYT-Net: ${lytLoadTime}ms (${lytEP})<br>` +
+                    `IAT: ${iatLoadTime}ms (${iatEP})<br>` +
+                    `SCI: ${sciLoadTime}ms (${sciEP})`;
+                runBtn.disabled = false;
+                
+                // Fetch model sizes
+                fetchModelSizes();
+                
+            } catch (e) {
+                status.innerHTML = '<span class="error">✗ Error: ' + e.message + '</span>';
+                console.error(e);
+            }
+        }
+        
+        async function fetchModelSizes() {
+            try {
+                const flolResp = await fetch('../models/low_light.onnx', { method: 'HEAD' });
+                const lytResp = await fetch('../models/low_light_lyt.onnx', { method: 'HEAD' });
+                const iatResp = await fetch('../models/low_light_iat.onnx', { method: 'HEAD' });
+                const sciResp = await fetch('../models/low_light_sci.onnx', { method: 'HEAD' });
+                
+                const flolSize = parseInt(flolResp.headers.get('content-length')) / 1024;
+                const lytSize = parseInt(lytResp.headers.get('content-length')) / 1024;
+                const iatSize = parseInt(iatResp.headers.get('content-length')) / 1024;
+                const sciSize = parseInt(sciResp.headers.get('content-length')) / 1024;
+                
+                document.getElementById('flolSize').textContent = flolSize.toFixed(1) + ' KB';
+                document.getElementById('lytSize').textContent = lytSize.toFixed(1) + ' KB';
+                document.getElementById('iatSize').textContent = iatSize.toFixed(1) + ' KB';
+                document.getElementById('sciSize').textContent = sciSize.toFixed(1) + ' KB';
+                
+                const sizeWinner = document.getElementById('sizeWinner');
+                const sizes = [
+                    {name:'FLOL',v:flolSize, col:2},
+                    {name:'LYT-Net',v:lytSize,col:3},
+                    {name:'IAT',v:iatSize,col:4},
+                    {name:'SCI',v:sciSize,col:5},
+                ];
+                sizes.sort((a,b)=>a.v-b.v);
+                sizeWinner.textContent = '🏆 ' + sizes[0].name;
+                sizeWinner.parentElement.querySelector(`td:nth-child(${sizes[0].col})`).classList.add('winner');
+            } catch (e) {
+                console.error('Could not fetch model sizes', e);
+            }
+        }
+        
+        function createDarkTestImage() {
+            const canvas = document.getElementById('inputCanvas');
+            const ctx = canvas.getContext('2d');
+            const size = 256;
+            canvas.width = size;
+            canvas.height = size;
+            
+            const imageData = ctx.createImageData(size, size);
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const i = (y * size + x) * 4;
+                    
+                    // Create a more realistic dark scene
+                    let r = 15 + Math.sin(x / 25) * 8 + Math.cos(y / 30) * 6;
+                    let g = 18 + Math.cos(x / 28) * 10 + Math.sin(y / 22) * 8;
+                    let b = 25 + Math.sin((x + y) / 35) * 12;
+                    
+                    // Add some "lights" in the scene
+                    const lights = [
+                        { x: 60, y: 60, r: 40, color: [80, 60, 40] },
+                        { x: 180, y: 80, r: 30, color: [40, 50, 70] },
+                        { x: 120, y: 180, r: 35, color: [60, 70, 50] },
+                    ];
+                    
+                    for (const light of lights) {
+                        const d = Math.sqrt((x - light.x) ** 2 + (y - light.y) ** 2);
+                        if (d < light.r) {
+                            const factor = (light.r - d) / light.r;
+                            r += light.color[0] * factor;
+                            g += light.color[1] * factor;
+                            b += light.color[2] * factor;
+                        }
+                    }
+                    
+                    // Add noise
+                    const noise = (Math.random() - 0.5) * 8;
+                    
+                    imageData.data[i] = Math.max(0, Math.min(255, r + noise));
+                    imageData.data[i + 1] = Math.max(0, Math.min(255, g + noise));
+                    imageData.data[i + 2] = Math.max(0, Math.min(255, b + noise));
+                    imageData.data[i + 3] = 255;
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+            
+            inputImage = { width: size, height: size, canvas };
+            updateInputStats();
+        }
+        
+        async function loadRealDarkImage() {
+            // Create a gradient that simulates a real dark photo
+            const canvas = document.getElementById('inputCanvas');
+            const ctx = canvas.getContext('2d');
+            const size = 256;
+            canvas.width = size;
+            canvas.height = size;
+            
+            // Create radial gradient (like a dimly lit room)
+            const gradient = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size * 0.7);
+            gradient.addColorStop(0, 'rgb(40, 35, 30)');
+            gradient.addColorStop(0.5, 'rgb(25, 22, 20)');
+            gradient.addColorStop(1, 'rgb(10, 8, 8)');
+            
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, size, size);
+            
+            // Add some texture
+            const imageData = ctx.getImageData(0, 0, size, size);
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                const noise = (Math.random() - 0.5) * 10;
+                imageData.data[i] = Math.max(0, Math.min(255, imageData.data[i] + noise));
+                imageData.data[i + 1] = Math.max(0, Math.min(255, imageData.data[i + 1] + noise));
+                imageData.data[i + 2] = Math.max(0, Math.min(255, imageData.data[i + 2] + noise));
+            }
+            ctx.putImageData(imageData, 0, 0);
+            
+            inputImage = { width: size, height: size, canvas };
+            updateInputStats();
+        }
+        
+        function loadCustomImage(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.getElementById('inputCanvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Resize to 256x256 for fair comparison
+                const size = 256;
+                canvas.width = size;
+                canvas.height = size;
+                ctx.drawImage(img, 0, 0, size, size);
+                
+                inputImage = { width: size, height: size, canvas };
+                updateInputStats();
+            };
+            img.src = URL.createObjectURL(file);
+        }
+        
+        function updateInputStats() {
+            const canvas = document.getElementById('inputCanvas');
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const stats = calculateStats(imageData.data);
+            
+            document.getElementById('inputStats').innerHTML = 
+                `Size: ${canvas.width}x${canvas.height}<br>` +
+                `Mean: <span class="value">${(stats.mean * 100).toFixed(1)}%</span><br>` +
+                `Range: [${(stats.min * 100).toFixed(0)}%, ${(stats.max * 100).toFixed(0)}%]`;
+        }
+        
+        function calculateStats(data) {
+            let sum = 0, min = 1, max = 0;
+            const pixelCount = data.length / 4;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                const brightness = (data[i] + data[i+1] + data[i+2]) / 3 / 255;
+                sum += brightness;
+                min = Math.min(min, brightness);
+                max = Math.max(max, brightness);
+            }
+            
+            return { mean: sum / pixelCount, min, max };
+        }
+        
+        async function runModel(session, inputCanvas, outputCanvas, modelName) {
+            const w = inputCanvas.width;
+            const h = inputCanvas.height;
+            
+            // Get input data
+            const ctx = inputCanvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, w, h);
+            
+            // For FLOL model, we need fixed 256x256, then scale back
+            let processW = w, processH = h;
+            let processImageData = imageData;
+            let padW = 0, padH = 0;
+            
+            if (modelName === 'FLOL') {
+                // FLOL needs fixed 256x256 (WebGL limitation)
+                processW = 256;
+                processH = 256;
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = 256;
+                tempCanvas.height = 256;
+                tempCanvas.getContext('2d').drawImage(inputCanvas, 0, 0, 256, 256);
+                processImageData = tempCanvas.getContext('2d').getImageData(0, 0, 256, 256);
+            }
+            // LYT-Net & SCI use WASM dynamic axes - no resize needed
+            // IAT (Swin) prefers dimensions divisible by 8: pad if needed
+            if (modelName === 'IAT') {
+                const padTo = 8;
+                const paddedW = Math.ceil(w / padTo) * padTo;
+                const paddedH = Math.ceil(h / padTo) * padTo;
+                if (paddedW !== w || paddedH !== h) {
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = paddedW;
+                    tempCanvas.height = paddedH;
+                    const tctx = tempCanvas.getContext('2d');
+                    tctx.fillStyle = 'black';
+                    tctx.fillRect(0, 0, paddedW, paddedH);
+                    tctx.drawImage(inputCanvas, 0, 0, w, h);
+                    processW = paddedW;
+                    processH = paddedH;
+                    processImageData = tctx.getImageData(0, 0, paddedW, paddedH);
+                    padW = w;
+                    padH = h;
+                }
+            }
+            
+            // Convert to tensor
+            const float32Data = new Float32Array(3 * processH * processW);
+            for (let c = 0; c < 3; c++) {
+                for (let y = 0; y < processH; y++) {
+                    for (let x = 0; x < processW; x++) {
+                        const srcIdx = (y * processW + x) * 4 + c;
+                        const dstIdx = c * processH * processW + y * processW + x;
+                        float32Data[dstIdx] = processImageData.data[srcIdx] / 255.0;
+                    }
+                }
+            }
+            
+            const inputTensor = new ort.Tensor('float32', float32Data, [1, 3, processH, processW]);
+            
+            // Run inference
+            const startTime = performance.now();
+            const results = await session.run({ input: inputTensor });
+            const inferenceTime = performance.now() - startTime;
+            
+            // Get output
+            const outputTensor = results.output;
+            const outputData = outputTensor.data;
+            const outH = outputTensor.dims[2];
+            const outW = outputTensor.dims[3];
+            
+            // Convert to image
+            const outImageData = new ImageData(outW, outH);
+            for (let y = 0; y < outH; y++) {
+                for (let x = 0; x < outW; x++) {
+                    const dstIdx = (y * outW + x) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        const srcIdx = c * outH * outW + y * outW + x;
+                        outImageData.data[dstIdx + c] = Math.round(Math.max(0, Math.min(255, outputData[srcIdx] * 255)));
+                    }
+                    outImageData.data[dstIdx + 3] = 255;
+                }
+            }
+            
+            // Draw to output canvas (scale if needed for FLOL, crop if padded for IAT)
+            outputCanvas.width = w;
+            outputCanvas.height = h;
+            const outCtx = outputCanvas.getContext('2d');
+            
+            if (modelName === 'FLOL' && (outW !== w || outH !== h)) {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = outW;
+                tempCanvas.height = outH;
+                tempCanvas.getContext('2d').putImageData(outImageData, 0, 0);
+                outCtx.drawImage(tempCanvas, 0, 0, w, h);
+            } else if (modelName === 'IAT' && (outW !== w || outH !== h) && padW && padH) {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = outW;
+                tempCanvas.height = outH;
+                tempCanvas.getContext('2d').putImageData(outImageData, 0, 0);
+                // crop back to original size
+                outCtx.drawImage(tempCanvas, 0, 0, w, h, 0, 0, w, h);
+            } else {
+                outCtx.putImageData(outImageData, 0, 0);
+            }
+            
+            // Calculate output stats
+            const finalImageData = outCtx.getImageData(0, 0, w, h);
+            const stats = calculateStats(finalImageData.data);
+            
+            return { time: inferenceTime, stats };
+        }
+        
+        async function runComparison() {
+            if (!inputImage || !flolSession || !lytSession || !iatSession || !sciSession) {
+                alert('Please load an image and wait for models to load');
+                return;
+            }
+            
+            const status = document.getElementById('status');
+            const runBtn = document.getElementById('runBtn');
+            runBtn.disabled = true;
+            
+            try {
+                // Get input stats
+                const inputCanvas = document.getElementById('inputCanvas');
+                const inputData = inputCanvas.getContext('2d').getImageData(0, 0, inputCanvas.width, inputCanvas.height);
+                const inputStats = calculateStats(inputData.data);
+                
+                // Run FLOL
+                status.textContent = 'Running FLOL model...';
+                await new Promise(r => setTimeout(r, 50));
+                const flolResult = await runModel(flolSession, inputCanvas, document.getElementById('flolCanvas'), 'FLOL');
+                
+                // Run LYT-Net
+                status.textContent = 'Running LYT-Net model...';
+                await new Promise(r => setTimeout(r, 50));
+                const lytResult = await runModel(lytSession, inputCanvas, document.getElementById('lytCanvas'), 'LYT');
+
+                // Run IAT
+                status.textContent = 'Running IAT model...';
+                await new Promise(r => setTimeout(r, 50));
+                const iatResult = await runModel(iatSession, inputCanvas, document.getElementById('iatCanvas'), 'IAT');
+
+                // Run SCI
+                status.textContent = 'Running SCI model...';
+                await new Promise(r => setTimeout(r, 50));
+                const sciResult = await runModel(sciSession, inputCanvas, document.getElementById('sciCanvas'), 'SCI');
+                
+                // Update stats displays
+                document.getElementById('flolStats').innerHTML = 
+                    `Time: <span class="highlight">${flolResult.time.toFixed(0)}ms</span><br>` +
+                    `Mean: <span class="value">${(flolResult.stats.mean * 100).toFixed(1)}%</span><br>` +
+                    `Range: [${(flolResult.stats.min * 100).toFixed(0)}%, ${(flolResult.stats.max * 100).toFixed(0)}%]`;
+                
+                document.getElementById('lytStats').innerHTML = 
+                    `Time: <span class="highlight">${lytResult.time.toFixed(0)}ms</span><br>` +
+                    `Mean: <span class="value">${(lytResult.stats.mean * 100).toFixed(1)}%</span><br>` +
+                    `Range: [${(lytResult.stats.min * 100).toFixed(0)}%, ${(lytResult.stats.max * 100).toFixed(0)}%]`;
+                
+                document.getElementById('iatStats').innerHTML = 
+                    `Time: <span class="highlight">${iatResult.time.toFixed(0)}ms</span><br>` +
+                    `Mean: <span class="value">${(iatResult.stats.mean * 100).toFixed(1)}%</span><br>` +
+                    `Range: [${(iatResult.stats.min * 100).toFixed(0)}%, ${(iatResult.stats.max * 100).toFixed(0)}%]`;
+                
+                document.getElementById('sciStats').innerHTML = 
+                    `Time: <span class="highlight">${sciResult.time.toFixed(0)}ms</span><br>` +
+                    `Mean: <span class="value">${(sciResult.stats.mean * 100).toFixed(1)}%</span><br>` +
+                    `Range: [${(sciResult.stats.min * 100).toFixed(0)}%, ${(sciResult.stats.max * 100).toFixed(0)}%]`;
+                
+                // Update results table
+                updateResults(inputStats, flolResult, lytResult, iatResult, sciResult);
+                
+                status.innerHTML = '<span class="success">✓ Comparison complete!</span>';
+                
+            } catch (e) {
+                status.innerHTML = '<span class="error">✗ Error: ' + e.message + '</span>';
+                console.error(e);
+            } finally {
+                runBtn.disabled = false;
+            }
+        }
+        
+        function updateResults(inputStats, flolResult, lytResult, iatResult, sciResult) {
+            // Time
+            document.getElementById('flolTime').textContent = flolResult.time.toFixed(0) + 'ms';
+            document.getElementById('lytTime').textContent = lytResult.time.toFixed(0) + 'ms';
+            document.getElementById('iatTime').textContent = iatResult.time.toFixed(0) + 'ms';
+            document.getElementById('sciTime').textContent = sciResult.time.toFixed(0) + 'ms';
+            const timeWinner = document.getElementById('timeWinner');
+            const times = [
+                {name:'FLOL', v: flolResult.time, col:2},
+                {name:'LYT-Net', v: lytResult.time, col:3},
+                {name:'IAT', v: iatResult.time, col:4},
+                {name:'SCI', v: sciResult.time, col:5},
+            ].sort((a,b)=>a.v-b.v);
+            timeWinner.textContent = '🏆 ' + times[0].name;
+            timeWinner.parentElement.querySelector(`td:nth-child(${times[0].col})`).classList.add('winner');
+            
+            // Brightness boost
+            const flolBoost = ((flolResult.stats.mean - inputStats.mean) / inputStats.mean * 100).toFixed(0);
+            const lytBoost = ((lytResult.stats.mean - inputStats.mean) / inputStats.mean * 100).toFixed(0);
+            const iatBoost = ((iatResult.stats.mean - inputStats.mean) / inputStats.mean * 100).toFixed(0);
+            const sciBoost = ((sciResult.stats.mean - inputStats.mean) / inputStats.mean * 100).toFixed(0);
+            document.getElementById('flolBrightness').textContent = '+' + flolBoost + '%';
+            document.getElementById('lytBrightness').textContent = '+' + lytBoost + '%';
+            document.getElementById('iatBrightness').textContent = '+' + iatBoost + '%';
+            document.getElementById('sciBrightness').textContent = '+' + sciBoost + '%';
+            const brightnessWinner = document.getElementById('brightnessWinner');
+            const boosts = [
+                {name:'FLOL', v: parseFloat(flolBoost), col:2},
+                {name:'LYT-Net', v: parseFloat(lytBoost), col:3},
+                {name:'IAT', v: parseFloat(iatBoost), col:4},
+                {name:'SCI', v: parseFloat(sciBoost), col:5},
+            ].sort((a,b)=>b.v-a.v);
+            brightnessWinner.textContent = '🏆 ' + boosts[0].name;
+            brightnessWinner.parentElement.querySelector(`td:nth-child(${boosts[0].col})`).classList.add('winner');
+            
+            // Dynamic range
+            const flolRange = ((flolResult.stats.max - flolResult.stats.min) * 100).toFixed(0);
+            const lytRange = ((lytResult.stats.max - lytResult.stats.min) * 100).toFixed(0);
+            const iatRange = ((iatResult.stats.max - iatResult.stats.min) * 100).toFixed(0);
+            const sciRange = ((sciResult.stats.max - sciResult.stats.min) * 100).toFixed(0);
+            document.getElementById('flolDynamic').textContent = flolRange + '%';
+            document.getElementById('lytDynamic').textContent = lytRange + '%';
+            document.getElementById('iatDynamic').textContent = iatRange + '%';
+            document.getElementById('sciDynamic').textContent = sciRange + '%';
+            const dynamicWinner = document.getElementById('dynamicWinner');
+            const ranges = [
+                {name:'FLOL', v: parseFloat(flolRange), col:2},
+                {name:'LYT-Net', v: parseFloat(lytRange), col:3},
+                {name:'IAT', v: parseFloat(iatRange), col:4},
+                {name:'SCI', v: parseFloat(sciRange), col:5},
+            ].sort((a,b)=>b.v-a.v);
+            dynamicWinner.textContent = '🏆 ' + ranges[0].name;
+            dynamicWinner.parentElement.querySelector(`td:nth-child(${ranges[0].col})`).classList.add('winner');
+        }
+        
+        // Load models on page load
+        loadModels();
+    </script>
+</body>
+</html>
+

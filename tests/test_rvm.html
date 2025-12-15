@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>BiRefNet Background Removal (ONNX, HF Transformers.js)</title>
+    <style>
+        body { font-family: system-ui; max-width: 1200px; margin: 0 auto; padding: 20px; background: #0f172a; color: #e2e8f0; }
+        h1 { color: #38bdf8; }
+        .container { display: flex; gap: 20px; flex-wrap: wrap; }
+        .image-box { flex: 1; min-width: 320px; }
+        canvas { max-width: 100%; border: 2px solid #1e293b; background: #000; }
+        #status { padding: 12px; background: #0b1220; border-radius: 8px; margin: 16px 0; min-height: 24px;}
+        .success { color: #4ade80; }
+        .error { color: #f87171; }
+        button { background: #38bdf8; color: #0b1220; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-size: 15px; margin: 4px; }
+        button:hover { background: #0ea5e9; }
+        input[type="file"] { margin: 10px 0; }
+        .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #1e293b; color: #cbd5e1; font-size: 13px; margin-right: 8px; }
+    </style>
+</head>
+<body>
+    <h1>🧭 BiRefNet Background Removal (Transformers.js, ONNX)</h1>
+    <p>
+        Loads <code>onnx-community/BiRefNet-ONNX</code> via Hugging Face Transformers.js (ONNXRuntime-WASM backend).
+        Provide a URL or upload an image; it will predict an alpha matte and show the cutout + mask.
+    </p>
+
+    <div>
+        <button id="btnSample">Generate sample ball</button>
+        <button id="btnUrl" disabled>Run from URL (disabled)</button>
+        <input type="file" id="fileInput" accept="image/*">
+        <span class="pill" id="ioInfo">H/W: ?</span>
+    </div>
+
+    <div id="status">Initializing transformers.js...</div>
+
+    <div class="container">
+        <div class="image-box">
+            <h3>Input</h3>
+            <canvas id="inputCanvas"></canvas>
+        </div>
+        <div class="image-box">
+            <h3>Cutout (alpha applied)</h3>
+            <canvas id="cutoutCanvas"></canvas>
+        </div>
+        <div class="image-box">
+            <h3>Mask</h3>
+            <canvas id="maskCanvas"></canvas>
+        </div>
+    </div>
+
+    <script type="module">
+        import { AutoModel, AutoProcessor, RawImage, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0";
+
+        const statusEl = document.getElementById('status');
+        const ioInfoEl = document.getElementById('ioInfo');
+        const inputCanvas = document.getElementById('inputCanvas');
+        const cutoutCanvas = document.getElementById('cutoutCanvas');
+        const maskCanvas = document.getElementById('maskCanvas');
+        const fileInput = document.getElementById('fileInput');
+        const btnUrl = document.getElementById('btnUrl');
+        const btnSample = document.getElementById('btnSample');
+
+        let model, processor;
+        let ready = false;
+
+        // Configure ORT wasm assets
+        env.backends.onnx.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/";
+        env.allowLocalModels = true;
+
+        const setStatus = (msg, err=false) => {
+            statusEl.textContent = msg;
+            statusEl.className = err ? 'error' : 'success';
+        };
+
+        async function initModel() {
+            setStatus('Loading model (local if available)...');
+            const localPath = '../models/birefnet-onnx'; // place downloaded repo here
+            const id = localPath;
+            model = await AutoModel.from_pretrained(id, { dtype: 'fp32', device: 'wasm' });
+            setStatus('Loading processor...');
+            processor = await AutoProcessor.from_pretrained(id);
+            ready = true;
+            setStatus('✓ Ready. Generate sample or upload.');
+        }
+
+        function drawImageToCanvas(rawImg, canvas) {
+            canvas.width = rawImg.width;
+            canvas.height = rawImg.height;
+            const ctx = canvas.getContext('2d');
+            const imageData = new ImageData(rawImg.data, rawImg.width, rawImg.height);
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        function maskTensorToRgba(maskTensor) {
+            // maskTensor expected shape [1, H, W] or [1,1,H,W]
+            const dims = maskTensor.dims;
+            let h, w, data;
+            if (dims.length === 4) {
+                [ , , h, w] = dims;
+                data = maskTensor.data;
+            } else if (dims.length === 3) {
+                [, h, w] = dims;
+                data = maskTensor.data;
+            } else {
+                throw new Error(`Unexpected mask dims: ${dims}`);
+            }
+            const rgba = new Uint8ClampedArray(h * w * 4);
+            for (let i = 0; i < h * w; i++) {
+                const v = data[i];
+                const dst = i * 4;
+                rgba[dst] = rgba[dst+1] = rgba[dst+2] = v;
+                rgba[dst+3] = 255;
+            }
+            return { rgba, h, w };
+        }
+
+        function applyMaskToImage(rawImg, maskTensor) {
+            const { width: w, height: h, data: src } = rawImg;
+            const mask = maskTensor.data;
+            const out = new Uint8ClampedArray(w * h * 4);
+            for (let i = 0; i < w * h; i++) {
+                const a = mask[i] / 255;
+                const dst = i * 4;
+                out[dst]     = Math.round(src[dst] * a);
+                out[dst + 1] = Math.round(src[dst + 1] * a);
+                out[dst + 2] = Math.round(src[dst + 2] * a);
+                out[dst + 3] = Math.round(a * 255);
+            }
+            return new ImageData(out, w, h);
+        }
+
+        function makeSampleImage() {
+            const size = 512;
+            const radius = 120;
+            const cx = size / 2;
+            const cy = size / 2;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            // background
+            ctx.fillStyle = '#1b1b2f';
+            ctx.fillRect(0, 0, size, size);
+            // subtle gradient
+            const g = ctx.createRadialGradient(cx, cy, 40, cx, cy, 220);
+            g.addColorStop(0, '#2d9cdb');
+            g.addColorStop(1, '#0a2540');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, size, size);
+            // ball
+            const ball = ctx.createRadialGradient(cx - radius/4, cy - radius/4, 10, cx, cy, radius);
+            ball.addColorStop(0, '#f8fafc');
+            ball.addColorStop(0.3, '#e2e8f0');
+            ball.addColorStop(1, '#0ea5e9');
+            ctx.fillStyle = ball;
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.fill();
+            // shadow
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            ctx.beginPath();
+            ctx.ellipse(cx + 10, cy + radius, radius * 0.9, radius * 0.2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            return canvas;
+        }
+
+        async function run(source) {
+            try {
+                if (!ready) {
+                    setStatus('Model not ready yet...', true);
+                    return;
+                }
+                setStatus('Preparing image...');
+                let rawImg;
+                if (source === 'sample') {
+                    const canvas = makeSampleImage();
+                    const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+                    rawImg = await RawImage.fromBlob(blob);
+                } else if (source instanceof File) {
+                    rawImg = await RawImage.fromBlob(source);
+                } else if (typeof source === 'string') {
+                    rawImg = await RawImage.fromURL(source);
+                } else {
+                    throw new Error('No image source');
+                }
+                ioInfoEl.textContent = `H/W: ${rawImg.height}x${rawImg.width}`;
+                drawImageToCanvas(rawImg, inputCanvas);
+
+                setStatus('Preprocessing...');
+                const { pixel_values } = await processor(rawImg);
+
+                setStatus('Running inference (WASM backend)...');
+                const t0 = performance.now();
+                const { output_image } = await model({ input_image: pixel_values });
+                const elapsed = (performance.now() - t0).toFixed(0);
+
+                // Convert logits -> mask uint8
+                const mask = output_image[0].sigmoid().mul(255).to('uint8');
+                const { rgba, h, w } = maskTensorToRgba(mask);
+                const maskImageData = new ImageData(rgba, w, h);
+                maskCanvas.width = w;
+                maskCanvas.height = h;
+                maskCanvas.getContext('2d').putImageData(maskImageData, 0, 0);
+
+                // Resize mask to input size if needed
+                if (w !== rawImg.width || h !== rawImg.height) {
+                    const temp = document.createElement('canvas');
+                    temp.width = w; temp.height = h;
+                    temp.getContext('2d').putImageData(maskImageData, 0, 0);
+                    const resized = document.createElement('canvas');
+                    resized.width = rawImg.width; resized.height = rawImg.height;
+                    const rctx = resized.getContext('2d');
+                    rctx.drawImage(temp, 0, 0, resized.width, resized.height);
+                    const resizedData = rctx.getImageData(0, 0, resized.width, resized.height);
+                    maskCanvas.width = resized.width;
+                    maskCanvas.height = resized.height;
+                    maskCanvas.getContext('2d').putImageData(resizedData, 0, 0);
+                    // overwrite mask tensor data for cutout
+                    const newMask = new Uint8Array(resizedData.data.length / 4);
+                    for (let i = 0; i < newMask.length; i++) newMask[i] = resizedData.data[i * 4];
+                    mask.data = newMask;
+                }
+
+                // Cutout using mask aligned to input size
+                const cutout = applyMaskToImage(rawImg, mask);
+                cutoutCanvas.width = rawImg.width;
+                cutoutCanvas.height = rawImg.height;
+                cutoutCanvas.getContext('2d').putImageData(cutout, 0, 0);
+
+                setStatus(`✓ Done in ${elapsed} ms`);
+            } catch (e) {
+                console.error(e);
+                setStatus(e.message || 'Error', true);
+            }
+        }
+
+        btnUrl.onclick = () => setStatus('URL input disabled for this demo', true);
+        btnSample.onclick = () => run('sample');
+        fileInput.onchange = (e) => {
+            const file = e.target.files[0];
+            if (file) run(file);
+        };
+
+        initModel();
+    </script>
+</body>
+</html>
+

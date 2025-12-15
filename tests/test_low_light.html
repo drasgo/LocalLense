@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Low-Light Enhancement Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+    <style>
+        body { font-family: system-ui; max-width: 1200px; margin: 0 auto; padding: 20px; background: #1a1a2e; color: #fff; }
+        h1 { color: #00d4ff; }
+        .container { display: flex; gap: 20px; flex-wrap: wrap; }
+        .image-box { flex: 1; min-width: 300px; }
+        .image-box h3 { margin-bottom: 10px; }
+        canvas { max-width: 100%; border: 2px solid #333; background: #000; }
+        #status { padding: 15px; background: #2a2a4a; border-radius: 8px; margin: 20px 0; }
+        .success { color: #4ade80; }
+        .error { color: #f87171; }
+        button { background: #00d4ff; color: #000; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; margin: 5px; }
+        button:hover { background: #00a8cc; }
+        input[type="file"] { margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>🌙 Low-Light Enhancement Test</h1>
+    
+    <div>
+        <button onclick="createDarkTestImage()">Create Dark Test Image</button>
+        <input type="file" id="fileInput" accept="image/*" onchange="loadCustomImage(event)">
+    </div>
+    
+    <div id="status">Loading model...</div>
+    
+    <div class="container">
+        <div class="image-box">
+            <h3>Input (Dark Image)</h3>
+            <canvas id="inputCanvas"></canvas>
+            <p id="inputInfo"></p>
+        </div>
+        <div class="image-box">
+            <h3>Output (Enhanced)</h3>
+            <canvas id="outputCanvas"></canvas>
+            <p id="outputInfo"></p>
+        </div>
+    </div>
+
+    <script>
+        let session = null;
+        ort.env.wasm.simd = true;
+        ort.env.wasm.numThreads = navigator.hardwareConcurrency;
+
+        async function loadModel() {
+            const status = document.getElementById('status');
+            try {
+                status.textContent = 'Loading ONNX model...';
+                session = await ort.InferenceSession.create('../models/low_light.onnx?v=' + Math.random(), {
+                    executionProviders: ['webgl', 'wasm']
+                });
+                status.innerHTML = '<span class="success">✓ Model loaded successfully!</span> Ready to enhance images.';
+            } catch (e) {
+                status.innerHTML = '<span class="error">✗ Error loading model: ' + e.message + '</span>';
+                console.error(e);
+            }
+        }
+        
+        function createDarkTestImage() {
+            const canvas = document.getElementById('inputCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Create a 256x256 dark test image
+            const size = 256;
+            canvas.width = size;
+            canvas.height = size;
+            
+            // Create a very dark gradient with some features
+            const imageData = ctx.createImageData(size, size);
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const i = (y * size + x) * 4;
+                    
+                    // Base dark values (simulating low-light)
+                    let r = 20 + Math.sin(x / 30) * 10 + Math.cos(y / 25) * 8;
+                    let g = 25 + Math.cos(x / 35) * 12 + Math.sin(y / 20) * 10;
+                    let b = 30 + Math.sin((x + y) / 40) * 15;
+                    
+                    // Add some brighter spots
+                    const cx1 = 80, cy1 = 80;
+                    const cx2 = 180, cy2 = 150;
+                    const d1 = Math.sqrt((x - cx1) ** 2 + (y - cy1) ** 2);
+                    const d2 = Math.sqrt((x - cx2) ** 2 + (y - cy2) ** 2);
+                    
+                    if (d1 < 40) {
+                        const factor = (40 - d1) / 40;
+                        r += 60 * factor;
+                        g += 50 * factor;
+                        b += 40 * factor;
+                    }
+                    if (d2 < 30) {
+                        const factor = (30 - d2) / 30;
+                        r += 40 * factor;
+                        g += 55 * factor;
+                        b += 70 * factor;
+                    }
+                    
+                    imageData.data[i] = Math.min(255, r);
+                    imageData.data[i + 1] = Math.min(255, g);
+                    imageData.data[i + 2] = Math.min(255, b);
+                    imageData.data[i + 3] = 255;
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+            
+            document.getElementById('inputInfo').textContent = `${size}x${size} synthetic dark image`;
+            runEnhancement();
+        }
+        
+        function loadCustomImage(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.getElementById('inputCanvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Limit size for memory
+                let w = img.width, h = img.height;
+                const maxSize = 512;
+                if (w > maxSize || h > maxSize) {
+                    const scale = maxSize / Math.max(w, h);
+                    w = Math.round(w * scale);
+                    h = Math.round(h * scale);
+                }
+                
+                canvas.width = w;
+                canvas.height = h;
+                ctx.drawImage(img, 0, 0, w, h);
+                
+                document.getElementById('inputInfo').textContent = `${w}x${h} (original: ${img.width}x${img.height})`;
+                runEnhancement();
+            };
+            img.src = URL.createObjectURL(file);
+        }
+        
+        async function runEnhancement() {
+            if (!session) {
+                document.getElementById('status').innerHTML = '<span class="error">Model not loaded yet!</span>';
+                return;
+            }
+            
+            const status = document.getElementById('status');
+            const inputCanvas = document.getElementById('inputCanvas');
+            const outputCanvas = document.getElementById('outputCanvas');
+            
+            try {
+                status.textContent = 'Running enhancement...';
+                const startTime = performance.now();
+                
+                const ctx = inputCanvas.getContext('2d');
+                
+                // Model requires fixed 256x256 input
+                const modelSize = 256;
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = modelSize;
+                tempCanvas.height = modelSize;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(inputCanvas, 0, 0, modelSize, modelSize);
+                
+                const w = modelSize;
+                const h = modelSize;
+                const imageData = tempCtx.getImageData(0, 0, w, h);
+                
+                // Convert to tensor [1, 3, H, W] normalized to [0, 1]
+                const float32Data = new Float32Array(3 * h * w);
+                for (let c = 0; c < 3; c++) {
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            const srcIdx = (y * w + x) * 4 + c;
+                            const dstIdx = c * h * w + y * w + x;
+                            float32Data[dstIdx] = imageData.data[srcIdx] / 255.0;
+                        }
+                    }
+                }
+                
+                const inputTensor = new ort.Tensor('float32', float32Data, [1, 3, h, w]);
+                
+                // Calculate input brightness
+                let inputSum = 0;
+                for (let i = 0; i < float32Data.length; i++) inputSum += float32Data[i];
+                const inputMean = inputSum / float32Data.length;
+                
+                // Run inference
+                const results = await session.run({ input: inputTensor });
+                const outputTensor = results.output;
+                const outputData = outputTensor.data;
+                
+                // Calculate output brightness
+                let outputSum = 0;
+                for (let i = 0; i < outputData.length; i++) outputSum += outputData[i];
+                const outputMean = outputSum / outputData.length;
+                
+                // Convert back to image (model outputs 256x256)
+                const outH = outputTensor.dims[2];
+                const outW = outputTensor.dims[3];
+                
+                // Create temp canvas for model output
+                const outTempCanvas = document.createElement('canvas');
+                outTempCanvas.width = outW;
+                outTempCanvas.height = outH;
+                const outTempCtx = outTempCanvas.getContext('2d');
+                const outImageData = outTempCtx.createImageData(outW, outH);
+                
+                for (let y = 0; y < outH; y++) {
+                    for (let x = 0; x < outW; x++) {
+                        const dstIdx = (y * outW + x) * 4;
+                        for (let c = 0; c < 3; c++) {
+                            const srcIdx = c * outH * outW + y * outW + x;
+                            outImageData.data[dstIdx + c] = Math.round(Math.max(0, Math.min(255, outputData[srcIdx] * 255)));
+                        }
+                        outImageData.data[dstIdx + 3] = 255;
+                    }
+                }
+                
+                outTempCtx.putImageData(outImageData, 0, 0);
+                
+                // Scale output to match original input size
+                outputCanvas.width = inputCanvas.width;
+                outputCanvas.height = inputCanvas.height;
+                const outCtx = outputCanvas.getContext('2d');
+                outCtx.drawImage(outTempCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+                
+                const elapsed = (performance.now() - startTime).toFixed(0);
+                status.innerHTML = `<span class="success">✓ Enhancement complete in ${elapsed}ms</span>`;
+                document.getElementById('outputInfo').textContent = 
+                    `${outW}x${outH} | Brightness: ${(inputMean * 100).toFixed(1)}% → ${(outputMean * 100).toFixed(1)}%`;
+                
+            } catch (e) {
+                status.innerHTML = '<span class="error">✗ Error: ' + e.message + '</span>';
+                console.error(e);
+            }
+        }
+        
+        // Load model on page load
+        loadModel();
+    </script>
+</body>
+</html>
+

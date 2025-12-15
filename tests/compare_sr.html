@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super-Resolution Comparison</title>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 40px; background: #f5f5f5; }
+        h1 { color: #333; }
+        .comparison { display: flex; gap: 40px; flex-wrap: wrap; margin-top: 20px; }
+        .box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .box h3 { margin-top: 0; color: #666; }
+        img { border: 2px solid #ddd; border-radius: 4px; image-rendering: pixelated; }
+        .info { font-size: 14px; color: #888; margin-top: 10px; }
+        .zoom { transform: scale(2); transform-origin: top left; margin-bottom: 100px; }
+    </style>
+</head>
+<body>
+    <h1>🔬 Super-Resolution vs Bilinear Comparison</h1>
+    <p>Compare RLFN Super-Resolution (pre-trained) with simple bilinear upscaling.</p>
+    
+    <h2>Original (64×64)</h2>
+    <div class="box">
+        <img src="test_input.png" width="64" height="64">
+        <div class="info">Input image with fine patterns and lines</div>
+    </div>
+
+    <h2>Upscaled Results (256×256)</h2>
+    <div class="comparison">
+        <div class="box">
+            <h3>Bilinear Upscale</h3>
+            <img src="test_output_bilinear.png" width="256" height="256">
+            <div class="info">Simple interpolation - blurry edges</div>
+        </div>
+        <div class="box">
+            <h3>RLFN Super-Resolution</h3>
+            <img src="test_output_sr.png" width="256" height="256">
+            <div class="info">AI-enhanced - should have sharper edges</div>
+        </div>
+    </div>
+
+    <h2>Zoomed In (2x)</h2>
+    <div class="comparison">
+        <div class="box">
+            <h3>Bilinear (zoomed)</h3>
+            <div style="width: 256px; height: 256px; overflow: hidden;">
+                <img src="test_output_bilinear.png" class="zoom" width="256" height="256">
+            </div>
+        </div>
+        <div class="box">
+            <h3>RLFN SR (zoomed)</h3>
+            <div style="width: 256px; height: 256px; overflow: hidden;">
+                <img src="test_output_sr.png" class="zoom" width="256" height="256">
+            </div>
+        </div>
+    </div>
+
+    <h2>Note</h2>
+    <p>If both look similar, the model might not be producing real enhancement. 
+       Super-resolution works best on photos with natural textures, not synthetic patterns.</p>
+</body>
+</html>
+

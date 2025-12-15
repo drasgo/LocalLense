@@ -1,0 +1,2418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalLens - AI Photo Retouching in Your Browser</title>
+    <meta name="description" content="AI-powered photo retouching that never leaves your device. Super-resolution, lighting fix, background removal, and more.">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%230ea5e9'/%3E%3Cstop offset='100%25' style='stop-color:%23a855f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='52' cy='52' r='38' stroke='url(%23g)' stroke-width='6' fill='none'/%3E%3Ccircle cx='52' cy='52' r='32' fill='%23e0f2fe' opacity='0.5'/%3E%3Crect x='78' y='78' width='12' height='32' rx='6' fill='url(%23g)' transform='rotate(45 84 94)'/%3E%3Cg stroke='%230ea5e9' stroke-width='2'%3E%3Ccircle cx='52' cy='52' r='4' fill='%230ea5e9'/%3E%3Ccircle cx='38' cy='40' r='2' fill='%23a855f7'/%3E%3Ccircle cx='66' cy='40' r='2' fill='%23a855f7'/%3E%3Ccircle cx='38' cy='64' r='2' fill='%23a855f7'/%3E%3Ccircle cx='66' cy='64' r='2' fill='%23a855f7'/%3E%3Cline x1='52' y1='52' x2='38' y2='40'/%3E%3Cline x1='52' y1='52' x2='66' y2='40'/%3E%3Cline x1='52' y1='52' x2='38' y2='64'/%3E%3Cline x1='52' y1='52' x2='66' y2='64'/%3E%3C/g%3E%3C/svg%3E">
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        /* ========================================
+           CSS VARIABLES & RESET
+        ======================================== */
+        :root {
+            --bg-primary: #f8f9fb;
+            --bg-card: #ffffff;
+            --text-primary: #1a1a2e;
+            --text-secondary: #64748b;
+            --accent-primary: #0ea5e9;
+            --accent-primary-dark: #0284c7;
+            --accent-secondary: #a855f7;
+            --accent-gradient: linear-gradient(135deg, #0ea5e9 0%, #a855f7 100%);
+            --shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.06);
+            --shadow-hover: 0 8px 30px rgba(14, 165, 233, 0.15);
+            --radius: 16px;
+            --radius-sm: 10px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* ========================================
+           NAVIGATION
+        ======================================== */
+        .nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: rgba(248, 249, 251, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            transition: var(--transition);
+        }
+
+        .nav-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-decoration: none;
+        }
+
+        .nav-logo {
+            width: 36px;
+            height: 36px;
+            flex-shrink: 0;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.95rem;
+            transition: var(--transition);
+            position: relative;
+        }
+
+        .nav-links a::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: var(--accent-gradient);
+            transition: var(--transition);
+        }
+
+        .nav-links a:hover,
+        .nav-links a.active {
+            color: var(--accent-primary);
+        }
+
+        .nav-links a.active::after {
+            width: 100%;
+        }
+
+        .nav-mobile-toggle {
+            display: none;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+        }
+
+        /* ========================================
+           HERO SECTION
+        ======================================== */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            padding: 100px 24px 60px;
+            overflow: hidden;
+        }
+
+        .hero-bg {
+            position: absolute;
+            inset: 0;
+            z-index: -1;
+        }
+
+        .hero-blob {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.4;
+            animation: blob-float 20s ease-in-out infinite;
+        }
+
+        .hero-blob-1 {
+            background: var(--accent-primary);
+            top: -200px;
+            right: -100px;
+            animation-delay: 0s;
+        }
+
+        .hero-blob-2 {
+            background: var(--accent-secondary);
+            bottom: -200px;
+            left: -100px;
+            animation-delay: -7s;
+        }
+
+        .hero-blob-3 {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 400px;
+            height: 400px;
+            animation-delay: -14s;
+        }
+
+        @keyframes blob-float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            25% { transform: translate(30px, -30px) scale(1.05); }
+            50% { transform: translate(-20px, 20px) scale(0.95); }
+            75% { transform: translate(20px, 30px) scale(1.02); }
+        }
+
+        .hero-content {
+            text-align: center;
+            max-width: 800px;
+        }
+
+        .hero-logo {
+            width: 120px;
+            height: 120px;
+            margin: 0 auto 24px;
+            animation: float 6s ease-in-out infinite;
+        }
+
+        .hero-logo svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 10px 30px rgba(14, 165, 233, 0.3));
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .hero-title {
+            font-size: clamp(2.5rem, 8vw, 4.5rem);
+            font-weight: 800;
+            margin-bottom: 16px;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1.1;
+        }
+
+        .hero-subtitle {
+            font-size: clamp(1.1rem, 3vw, 1.4rem);
+            color: var(--text-secondary);
+            margin-bottom: 40px;
+            font-weight: 400;
+        }
+
+        .hero-features {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 24px;
+            margin-bottom: 48px;
+        }
+
+        .hero-feature {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--bg-card);
+            padding: 12px 20px;
+            border-radius: 50px;
+            box-shadow: var(--shadow-soft);
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+
+        .hero-feature svg {
+            width: 20px;
+            height: 20px;
+            color: var(--accent-primary);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 32px;
+            border-radius: 50px;
+            font-size: 1rem;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            border: none;
+            transition: var(--transition);
+        }
+
+        .btn-primary {
+            background: var(--accent-gradient);
+            color: white;
+            box-shadow: 0 4px 20px rgba(14, 165, 233, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(14, 165, 233, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-soft);
+        }
+
+        .btn-secondary:hover {
+            box-shadow: var(--shadow-hover);
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* ========================================
+           SECTIONS
+        ======================================== */
+        section {
+            padding: 80px 24px;
+        }
+
+        .section-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .section-title {
+            font-size: clamp(1.8rem, 5vw, 2.5rem);
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+
+        .section-desc {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* ========================================
+           TOOLS OVERVIEW GRID
+        ======================================== */
+        #tools {
+            background: linear-gradient(180deg, var(--bg-primary) 0%, #f0f4f8 100%);
+        }
+
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+        }
+
+        .tool-card {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            padding: 32px;
+            box-shadow: var(--shadow-soft);
+            transition: var(--transition);
+            text-align: center;
+        }
+
+        .tool-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-hover);
+        }
+
+        .tool-card-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 20px;
+            background: var(--accent-gradient);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .tool-card-icon svg {
+            width: 32px;
+            height: 32px;
+            color: white;
+        }
+
+        .tool-card h3 {
+            font-size: 1.25rem;
+            margin-bottom: 8px;
+        }
+
+        .tool-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin-bottom: 20px;
+        }
+
+        .tool-card .btn {
+            width: 100%;
+            justify-content: center;
+        }
+
+        /* ========================================
+           TOOL SECTIONS
+        ======================================== */
+        .tool-section {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            padding: 40px;
+            margin-bottom: 32px;
+            box-shadow: var(--shadow-soft);
+        }
+
+        .tool-section-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .tool-section-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--accent-gradient);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .tool-section-icon svg {
+            width: 24px;
+            height: 24px;
+            color: white;
+        }
+
+        .tool-section-title {
+            font-size: 1.5rem;
+            margin-bottom: 4px;
+        }
+
+        .tool-section-desc {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .tool-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+            align-items: start;
+        }
+
+        .tool-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .input-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .drop-zone {
+            border: 2px dashed #d1d5db;
+            border-radius: var(--radius-sm);
+            padding: 40px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: var(--transition);
+            background: var(--bg-primary);
+        }
+
+        .drop-zone:hover,
+        .drop-zone.drag-over {
+            border-color: var(--accent-primary);
+            background: rgba(14, 165, 233, 0.05);
+        }
+
+        .drop-zone svg {
+            width: 48px;
+            height: 48px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .drop-zone p {
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .drop-zone input[type="file"] {
+            display: none;
+        }
+
+        .drop-zone .btn {
+            font-size: 0.9rem;
+            padding: 10px 20px;
+        }
+
+        .input-preview {
+            display: none;
+            align-items: center;
+            gap: 16px;
+            padding: 12px;
+            background: var(--bg-primary);
+            border-radius: var(--radius-sm);
+        }
+
+        .input-preview.has-image {
+            display: flex;
+        }
+
+        .input-preview img {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+
+        .input-preview-info {
+            flex: 1;
+        }
+
+        .input-preview-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 4px;
+            word-break: break-all;
+        }
+
+        .input-preview-size {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .input-preview .btn-remove {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+            color: var(--text-secondary);
+            transition: var(--transition);
+        }
+
+        .input-preview .btn-remove:hover {
+            color: #ef4444;
+        }
+
+        .tool-status {
+            padding: 12px 16px;
+            border-radius: var(--radius-sm);
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .tool-status.idle {
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+        }
+
+        .tool-status.loading {
+            background: rgba(14, 165, 233, 0.1);
+            color: var(--accent-primary);
+        }
+
+        .tool-status.running {
+            background: rgba(168, 85, 247, 0.1);
+            color: var(--accent-secondary);
+        }
+
+        .tool-status.done {
+            background: rgba(34, 197, 94, 0.1);
+            color: #16a34a;
+        }
+
+        .tool-status.error {
+            background: rgba(239, 68, 68, 0.1);
+            color: #dc2626;
+        }
+
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid currentColor;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .tool-output {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            align-self: start;
+        }
+
+        .output-canvas-wrap {
+            background: var(--bg-primary);
+            border-radius: var(--radius-sm);
+            padding: 16px;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid transparent;
+        }
+
+        .output-canvas-wrap canvas {
+            max-width: 100%;
+            max-height: 400px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .output-canvas-wrap canvas.has-result {
+            display: block;
+        }
+
+        .output-placeholder {
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        .output-placeholder svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+
+        .output-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Tool Options Toggle */
+        .tool-options {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 12px;
+            padding: 12px;
+            background: var(--bg-primary);
+            border-radius: var(--radius-sm);
+            font-size: 0.9rem;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: var(--accent-primary);
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+
+        .toggle-label {
+            color: var(--text-secondary);
+            user-select: none;
+            cursor: pointer;
+        }
+
+        .toggle-label:hover {
+            color: var(--text-primary);
+        }
+
+        /* 3D Photo parallax effect */
+        .depth-result-wrap {
+            position: relative;
+            overflow: hidden;
+            border-radius: 8px;
+        }
+
+        .depth-result-wrap canvas {
+            transition: transform 0.1s ease-out;
+        }
+
+        /* ========================================
+           PRO & DONATE
+        ======================================== */
+        #pro {
+            background: linear-gradient(180deg, #f0f4f8 0%, var(--bg-primary) 100%);
+        }
+
+        .pro-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 32px;
+        }
+
+        .pro-card {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            padding: 40px;
+            box-shadow: var(--shadow-soft);
+            text-align: center;
+        }
+
+        .pro-card.featured {
+            background: var(--accent-gradient);
+            color: white;
+        }
+
+        .pro-card.featured .pro-card-desc {
+            color: rgba(255, 255, 255, 0.85);
+        }
+
+        .pro-card-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 20px;
+            background: rgba(14, 165, 233, 0.1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .pro-card.featured .pro-card-icon {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .pro-card-icon svg {
+            width: 32px;
+            height: 32px;
+            color: var(--accent-primary);
+        }
+
+        .pro-card.featured .pro-card-icon svg {
+            color: white;
+        }
+
+        .pro-card-title {
+            font-size: 1.5rem;
+            margin-bottom: 16px;
+        }
+
+        .pro-card-desc {
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            line-height: 1.7;
+        }
+
+        .pro-features {
+            text-align: left;
+            margin-bottom: 24px;
+        }
+
+        .pro-features li {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 0;
+            font-size: 0.95rem;
+        }
+
+        .pro-card.featured .btn-secondary {
+            background: white;
+            color: var(--text-primary);
+        }
+
+        /* ========================================
+           FAQ
+        ======================================== */
+        .faq-list {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .faq-item {
+            background: var(--bg-card);
+            border-radius: var(--radius-sm);
+            box-shadow: var(--shadow-soft);
+            overflow: hidden;
+        }
+
+        .faq-question {
+            width: 100%;
+            padding: 20px 24px;
+            background: none;
+            border: none;
+            text-align: left;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            transition: var(--transition);
+            color: #000000 !important;
+            font-family: inherit;
+        }
+
+        .faq-question:hover {
+            color: var(--accent-primary) !important;
+        }
+
+        .faq-question svg {
+            width: 20px;
+            height: 20px;
+            flex-shrink: 0;
+            transition: var(--transition);
+        }
+
+        .faq-item.open .faq-question svg {
+            transform: rotate(180deg);
+        }
+
+        .faq-answer {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .faq-item.open .faq-answer {
+            max-height: 500px;
+        }
+
+        .faq-answer-inner {
+            padding: 0 24px 20px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        /* ========================================
+           FOOTER
+        ======================================== */
+        .footer {
+            background: var(--text-primary);
+            color: rgba(255, 255, 255, 0.7);
+            padding: 40px 24px;
+            text-align: center;
+        }
+
+        .footer-brand {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 12px;
+        }
+
+        .footer p {
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+        }
+
+        .footer a {
+            color: var(--accent-primary);
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* ========================================
+           BACK TO TOP BUTTON
+        ======================================== */
+        .back-to-top {
+            position: fixed;
+            bottom: 32px;
+            right: 32px;
+            width: 56px;
+            height: 56px;
+            background: var(--accent-gradient);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 20px rgba(14, 165, 233, 0.3);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(20px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 999;
+        }
+
+        .back-to-top.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .back-to-top:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 30px rgba(14, 165, 233, 0.4);
+        }
+
+        .back-to-top:active {
+            transform: translateY(-2px);
+        }
+
+        .back-to-top svg {
+            width: 24px;
+            height: 24px;
+            fill: white;
+        }
+
+        @media (max-width: 768px) {
+            .back-to-top {
+                bottom: 24px;
+                right: 24px;
+                width: 48px;
+                height: 48px;
+            }
+
+            .back-to-top svg {
+                width: 20px;
+                height: 20px;
+            }
+        }
+
+        /* ========================================
+           RESPONSIVE
+        ======================================== */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+                position: absolute;
+                top: 64px;
+                left: 0;
+                right: 0;
+                background: var(--bg-card);
+                flex-direction: column;
+                padding: 24px;
+                gap: 16px;
+                box-shadow: var(--shadow-soft);
+            }
+
+            .nav-links.open {
+                display: flex;
+            }
+
+            .nav-mobile-toggle {
+                display: block;
+            }
+
+            .nav-mobile-toggle svg {
+                width: 24px;
+                height: 24px;
+            }
+
+            .tool-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .hero-features {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            section {
+                padding: 60px 16px;
+            }
+
+            .tool-section {
+                padding: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="nav-inner">
+            <a href="#hero" class="nav-brand">
+                <svg class="nav-logo" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="navLensGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" style="stop-color:#0ea5e9"/>
+                            <stop offset="100%" style="stop-color:#a855f7"/>
+                        </linearGradient>
+                    </defs>
+                    <circle cx="52" cy="52" r="38" stroke="url(#navLensGrad)" stroke-width="6" fill="none"/>
+                    <circle cx="52" cy="52" r="32" fill="#e0f2fe" opacity="0.3"/>
+                    <rect x="78" y="78" width="12" height="32" rx="6" fill="url(#navLensGrad)" transform="rotate(45 84 94)"/>
+                    <g stroke="#0ea5e9" stroke-width="2" opacity="0.8">
+                        <circle cx="52" cy="52" r="4" fill="#0ea5e9"/>
+                        <circle cx="38" cy="40" r="2" fill="#a855f7"/><circle cx="66" cy="40" r="2" fill="#a855f7"/>
+                        <circle cx="38" cy="64" r="2" fill="#a855f7"/><circle cx="66" cy="64" r="2" fill="#a855f7"/>
+                        <line x1="52" y1="52" x2="38" y2="40"/><line x1="52" y1="52" x2="66" y2="40"/>
+                        <line x1="52" y1="52" x2="38" y2="64"/><line x1="52" y1="52" x2="66" y2="64"/>
+                    </g>
+                </svg>
+                LocalLens
+            </a>
+            <button class="nav-mobile-toggle" aria-label="Toggle menu">
+                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M4 6h16M4 12h16M4 18h16"/>
+                </svg>
+            </button>
+            <ul class="nav-links">
+                <li><a href="#hero">Home</a></li>
+                <li><a href="#tools">Tools</a></li>
+                <li><a href="#pro">Pro</a></li>
+                <li><a href="#faq">FAQ</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section id="hero" class="hero">
+        <div class="hero-bg">
+            <div class="hero-blob hero-blob-1"></div>
+            <div class="hero-blob hero-blob-2"></div>
+            <div class="hero-blob hero-blob-3"></div>
+        </div>
+        <div class="hero-content">
+            <div class="hero-logo">
+                <svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="heroLensGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" style="stop-color:#0ea5e9"/>
+                            <stop offset="100%" style="stop-color:#a855f7"/>
+                        </linearGradient>
+                        <linearGradient id="heroGlassGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" style="stop-color:#e0f2fe;stop-opacity:0.9"/>
+                            <stop offset="50%" style="stop-color:#f0f9ff;stop-opacity:0.6"/>
+                            <stop offset="100%" style="stop-color:#bae6fd;stop-opacity:0.8"/>
+                        </linearGradient>
+                        <filter id="heroGlow">
+                            <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                            <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+                    <circle cx="52" cy="52" r="38" stroke="url(#heroLensGrad)" stroke-width="6" fill="none"/>
+                    <circle cx="52" cy="52" r="32" fill="url(#heroGlassGrad)"/>
+                    <ellipse cx="40" cy="40" rx="12" ry="8" fill="white" opacity="0.5" transform="rotate(-30 40 40)"/>
+                    <rect x="78" y="78" width="12" height="32" rx="6" fill="url(#heroLensGrad)" transform="rotate(45 84 94)"/>
+                    <g stroke="#0ea5e9" stroke-width="1.5" opacity="0.7" filter="url(#heroGlow)">
+                        <circle cx="52" cy="52" r="4" fill="#0ea5e9"/>
+                        <circle cx="38" cy="40" r="2.5" fill="#a855f7"/><circle cx="66" cy="40" r="2.5" fill="#a855f7"/>
+                        <circle cx="38" cy="64" r="2.5" fill="#a855f7"/><circle cx="66" cy="64" r="2.5" fill="#a855f7"/>
+                        <circle cx="52" cy="32" r="2.5" fill="#0ea5e9"/><circle cx="52" cy="72" r="2.5" fill="#0ea5e9"/>
+                        <line x1="52" y1="52" x2="38" y2="40"/><line x1="52" y1="52" x2="66" y2="40"/>
+                        <line x1="52" y1="52" x2="38" y2="64"/><line x1="52" y1="52" x2="66" y2="64"/>
+                        <line x1="52" y1="52" x2="52" y2="32"/><line x1="52" y1="52" x2="52" y2="72"/>
+                        <line x1="38" y1="40" x2="52" y2="32"/><line x1="66" y1="40" x2="52" y2="32"/>
+                        <line x1="38" y1="64" x2="52" y2="72"/><line x1="66" y1="64" x2="52" y2="72"/>
+                    </g>
+                    <g transform="translate(70, 18)">
+                        <path d="M10 2 L18 6 L18 12 C18 18 10 22 10 22 C10 22 2 18 2 12 L2 6 Z" fill="url(#heroLensGrad)" stroke="white" stroke-width="1.5"/>
+                        <path d="M7 11 L9 13 L14 8" stroke="white" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                    </g>
+                </svg>
+            </div>
+            <h1 class="hero-title">LocalLens</h1>
+            <p class="hero-subtitle">AI-powered photo retouching that never leaves your device.</p>
+            <div class="hero-features">
+                <div class="hero-feature">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                    </svg>
+                    Runs completely in your browser
+                </div>
+                <div class="hero-feature">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                    </svg>
+                    No uploads. No accounts.
+                </div>
+                <div class="hero-feature">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+                    </svg>
+                    Super-resolution, lighting fix, and more
+                </div>
+            </div>
+            <a href="#tools" class="btn btn-primary">
+                Try the tools
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+                </svg>
+            </a>
+        </div>
+    </section>
+
+    <!-- Tools Overview -->
+    <section id="tools">
+        <div class="section-container">
+            <div class="section-header">
+                <h2 class="section-title">AI Tools</h2>
+                <p class="section-desc">Professional retouching powered by on-device AI. Pick a tool and enhance your photos instantly.</p>
+            </div>
+            <div class="tools-grid">
+                <!-- Super-Resolution Card -->
+                <div class="tool-card">
+                    <div class="tool-card-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7"/>
+                        </svg>
+                    </div>
+                    <h3>Super-Resolution</h3>
+                    <p>Upscale and enhance image details with AI.</p>
+                    <a href="#tool-super-res" class="btn btn-secondary">Open tool</a>
+                </div>
+                <!-- Lighting Fix Card -->
+                <div class="tool-card">
+                    <div class="tool-card-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                        </svg>
+                    </div>
+                    <h3>Lighting Fix</h3>
+                    <p>Enhance low-light and poorly exposed photos.</p>
+                    <a href="#tool-low-light" class="btn btn-secondary">Open tool</a>
+                </div>
+                <!-- Background Removal Card -->
+                <div class="tool-card">
+                    <div class="tool-card-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                        </svg>
+                    </div>
+                    <h3>Background Removal</h3>
+                    <p>Remove backgrounds with one click.</p>
+                    <a href="#tool-bg-removal" class="btn btn-secondary">Open tool</a>
+                </div>
+                <!-- Cartoonizer Card -->
+                <div class="tool-card">
+                    <div class="tool-card-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+                        </svg>
+                    </div>
+                    <h3>Cartoonizer</h3>
+                    <p>Transform photos into cartoon-style art.</p>
+                    <a href="#tool-cartoon" class="btn btn-secondary">Open tool</a>
+                </div>
+                <!-- 3D Photo Card -->
+                <div class="tool-card">
+                    <div class="tool-card-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                        </svg>
+                    </div>
+                    <h3>3D Photo</h3>
+                    <p>Generate depth maps for parallax effects.</p>
+                    <a href="#tool-depth" class="btn btn-secondary">Open tool</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Individual Tool Sections -->
+    <section id="tool-sections">
+        <div class="section-container">
+            <!-- Super-Resolution Tool -->
+            <div id="tool-super-res" class="tool-section" data-tool="superRes">
+                <div class="tool-section-header">
+                    <div class="tool-section-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="tool-section-title">Super-Resolution</h3>
+                        <p class="tool-section-desc">Upscale images and recover lost details using AI enhancement.</p>
+                    </div>
+                </div>
+                <div class="tool-layout">
+                    <div class="tool-controls">
+                        <div class="input-label">Input</div>
+                        <div class="drop-zone" data-tool="superRes">
+                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            <p>Drag & drop an image here</p>
+                            <input type="file" accept="image/*">
+                            <button class="btn btn-secondary">Choose file</button>
+                        </div>
+                        <div class="input-preview" data-tool="superRes">
+                            <img src="" alt="Input preview">
+                            <div class="input-preview-info">
+                                <div class="input-preview-name"></div>
+                                <div class="input-preview-size"></div>
+                            </div>
+                            <button class="btn-remove" title="Remove">
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <button class="btn btn-primary tool-run-btn" data-tool="superRes" disabled>
+                            Upscale image
+                        </button>
+                        <div class="tool-options">
+                            <label class="toggle-switch">
+                                <input type="checkbox" class="resize-toggle" data-tool="superRes">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <label class="toggle-label" data-tool="superRes">Limit input size (max 1024px)</label>
+                        </div>
+                    </div>
+                    <div class="tool-output">
+                        <div class="output-label">Result</div>
+                        <div class="output-canvas-wrap">
+                            <canvas data-tool="superRes"></canvas>
+                            <div class="output-placeholder" data-tool="superRes">
+                                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                <p>Result will appear here</p>
+                            </div>
+                        </div>
+                        <div class="tool-status idle" data-tool="superRes">
+                            <span class="status-text">Ready. Upload an image to begin.</span>
+                        </div>
+                        <button class="btn btn-secondary tool-download-btn" data-tool="superRes" disabled>
+                            Download result
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Lighting Fix Tool -->
+            <div id="tool-low-light" class="tool-section" data-tool="lowLight">
+                <div class="tool-section-header">
+                    <div class="tool-section-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="tool-section-title">Lighting Fix</h3>
+                        <p class="tool-section-desc">Enhance underexposed and low-light photos to reveal hidden details.</p>
+                    </div>
+                </div>
+                <div class="tool-layout">
+                    <div class="tool-controls">
+                        <div class="input-label">Input</div>
+                        <div class="drop-zone" data-tool="lowLight">
+                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            <p>Drag & drop an image here</p>
+                            <input type="file" accept="image/*">
+                            <button class="btn btn-secondary">Choose file</button>
+                        </div>
+                        <div class="input-preview" data-tool="lowLight">
+                            <img src="" alt="Input preview">
+                            <div class="input-preview-info">
+                                <div class="input-preview-name"></div>
+                                <div class="input-preview-size"></div>
+                            </div>
+                            <button class="btn-remove" title="Remove">
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <button class="btn btn-primary tool-run-btn" data-tool="lowLight" disabled>
+                            Fix lighting
+                        </button>
+                        <div class="tool-options">
+                            <label class="toggle-switch">
+                                <input type="checkbox" class="resize-toggle" data-tool="lowLight">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <label class="toggle-label" data-tool="lowLight">Limit input size (max 1024px)</label>
+                        </div>
+                    </div>
+                    <div class="tool-output">
+                        <div class="output-label">Result</div>
+                        <div class="output-canvas-wrap">
+                            <canvas data-tool="lowLight"></canvas>
+                            <div class="output-placeholder" data-tool="lowLight">
+                                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                <p>Result will appear here</p>
+                            </div>
+                        </div>
+                        <div class="tool-status idle" data-tool="lowLight">
+                            <span class="status-text">Ready. Upload an image to begin.</span>
+                        </div>
+                        <button class="btn btn-secondary tool-download-btn" data-tool="lowLight" disabled>
+                            Download result
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Background Removal Tool -->
+            <div id="tool-bg-removal" class="tool-section" data-tool="bgRemoval">
+                <div class="tool-section-header">
+                    <div class="tool-section-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="tool-section-title">Background Removal</h3>
+                        <p class="tool-section-desc">Automatically remove image backgrounds for product photos or portraits.</p>
+                    </div>
+                </div>
+                <div class="tool-layout">
+                    <div class="tool-controls">
+                        <div class="input-label">Input</div>
+                        <div class="drop-zone" data-tool="bgRemoval">
+                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            <p>Drag & drop an image here</p>
+                            <input type="file" accept="image/*">
+                            <button class="btn btn-secondary">Choose file</button>
+                        </div>
+                        <div class="input-preview" data-tool="bgRemoval">
+                            <img src="" alt="Input preview">
+                            <div class="input-preview-info">
+                                <div class="input-preview-name"></div>
+                                <div class="input-preview-size"></div>
+                            </div>
+                            <button class="btn-remove" title="Remove">
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <button class="btn btn-primary tool-run-btn" data-tool="bgRemoval" disabled>
+                            Remove background
+                        </button>
+                        <div class="tool-options">
+                            <label class="toggle-switch">
+                                <input type="checkbox" class="resize-toggle" data-tool="bgRemoval">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <label class="toggle-label" data-tool="bgRemoval">Limit input size (max 1024px)</label>
+                        </div>
+                    </div>
+                    <div class="tool-output">
+                        <div class="output-label">Result</div>
+                        <div class="output-canvas-wrap">
+                            <canvas data-tool="bgRemoval"></canvas>
+                            <div class="output-placeholder" data-tool="bgRemoval">
+                                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                <p>Result will appear here</p>
+                            </div>
+                        </div>
+                        <div class="tool-status idle" data-tool="bgRemoval">
+                            <span class="status-text">Ready. Upload an image to begin.</span>
+                        </div>
+                        <button class="btn btn-secondary tool-download-btn" data-tool="bgRemoval" disabled>
+                            Download result
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cartoonizer Tool -->
+            <div id="tool-cartoon" class="tool-section" data-tool="cartoon">
+                <div class="tool-section-header">
+                    <div class="tool-section-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="tool-section-title">Cartoonizer</h3>
+                        <p class="tool-section-desc">Turn your photos into fun cartoon-style artwork using AI.</p>
+                    </div>
+                </div>
+                <div class="tool-layout">
+                    <div class="tool-controls">
+                        <div class="input-label">Input</div>
+                        <div class="drop-zone" data-tool="cartoon">
+                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            <p>Drag & drop an image here</p>
+                            <input type="file" accept="image/*">
+                            <button class="btn btn-secondary">Choose file</button>
+                        </div>
+                        <div class="input-preview" data-tool="cartoon">
+                            <img src="" alt="Input preview">
+                            <div class="input-preview-info">
+                                <div class="input-preview-name"></div>
+                                <div class="input-preview-size"></div>
+                            </div>
+                            <button class="btn-remove" title="Remove">
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <button class="btn btn-primary tool-run-btn" data-tool="cartoon" disabled>
+                            Cartoonize image
+                        </button>
+                        <div class="tool-options">
+                            <label class="toggle-switch">
+                                <input type="checkbox" class="resize-toggle" data-tool="cartoon">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <label class="toggle-label" data-tool="cartoon">Limit input size (max 1024px)</label>
+                        </div>
+                    </div>
+                    <div class="tool-output">
+                        <div class="output-label">Result</div>
+                        <div class="output-canvas-wrap">
+                            <canvas data-tool="cartoon"></canvas>
+                            <div class="output-placeholder" data-tool="cartoon">
+                                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                <p>Result will appear here</p>
+                            </div>
+                        </div>
+                        <div class="tool-status idle" data-tool="cartoon">
+                            <span class="status-text">Ready. Upload an image to begin.</span>
+                        </div>
+                        <button class="btn btn-secondary tool-download-btn" data-tool="cartoon" disabled>
+                            Download result
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3D Photo (Depth) Tool -->
+            <div id="tool-depth" class="tool-section" data-tool="depth">
+                <div class="tool-section-header">
+                    <div class="tool-section-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="tool-section-title">3D Photo</h3>
+                        <p class="tool-section-desc">Generate depth maps and create interactive parallax effects.</p>
+                    </div>
+                </div>
+                <div class="tool-layout">
+                    <div class="tool-controls">
+                        <div class="input-label">Input</div>
+                        <div class="drop-zone" data-tool="depth">
+                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            <p>Drag & drop an image here</p>
+                            <input type="file" accept="image/*">
+                            <button class="btn btn-secondary">Choose file</button>
+                        </div>
+                        <div class="input-preview" data-tool="depth">
+                            <img src="" alt="Input preview">
+                            <div class="input-preview-info">
+                                <div class="input-preview-name"></div>
+                                <div class="input-preview-size"></div>
+                            </div>
+                            <button class="btn-remove" title="Remove">
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <button class="btn btn-primary tool-run-btn" data-tool="depth" disabled>
+                            Create 3D photo
+                        </button>
+                        <div class="tool-options">
+                            <label class="toggle-switch">
+                                <input type="checkbox" class="resize-toggle" data-tool="depth">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <label class="toggle-label" data-tool="depth">Limit input size (max 1024px)</label>
+                        </div>
+                    </div>
+                    <div class="tool-output">
+                        <div class="output-label">Result (move mouse over to see parallax effect)</div>
+                        <div class="output-canvas-wrap">
+                            <div class="depth-result-wrap" data-tool="depth">
+                                <canvas data-tool="depth"></canvas>
+                            </div>
+                            <div class="output-placeholder" data-tool="depth">
+                                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                <p>Depth map will appear here</p>
+                            </div>
+                        </div>
+                        <div class="tool-status idle" data-tool="depth">
+                            <span class="status-text">Ready. Upload an image to begin.</span>
+                        </div>
+                        <button class="btn btn-secondary tool-download-btn" data-tool="depth" disabled>
+                            Download depth map
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pro & Donate Section -->
+    <section id="pro">
+        <div class="section-container">
+            <div class="section-header">
+                <h2 class="section-title">Go Further</h2>
+                <p class="section-desc">Support the project and unlock more possibilities.</p>
+            </div>
+            <div class="pro-grid">
+                <div class="pro-card">
+                    <div class="pro-card-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
+                    <h3 class="pro-card-title">PRO (Coming Soon)</h3>
+                    <p class="pro-card-desc">A standalone desktop app with advanced features for power users.</p>
+                    <ul class="pro-features">
+                        <li>
+                            <svg width="18" height="18" fill="none" stroke="var(--accent-primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                            Batch processing
+                        </li>
+                        <li>
+                            <svg width="18" height="18" fill="none" stroke="var(--accent-primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                            Higher resolution output
+                        </li>
+                        <li>
+                            <svg width="18" height="18" fill="none" stroke="var(--accent-primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                            Full offline bundle
+                        </li>
+                        <li>
+                            <svg width="18" height="18" fill="none" stroke="var(--accent-primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                            Priority support
+                        </li>
+                    </ul>
+                    <button class="btn btn-secondary" onclick="document.getElementById('pro').scrollIntoView({behavior:'smooth'})">Learn more</button>
+                </div>
+                <div class="pro-card featured">
+                    <div class="pro-card-icon">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+                        </svg>
+                    </div>
+                    <h3 class="pro-card-title">Support This Project</h3>
+                    <p class="pro-card-desc">If these tools save you time, consider supporting development. Every contribution helps keep LocalLens free and improving.</p>
+                    <button id="donateButton" class="btn btn-secondary">❤️ Buy me a coffee</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section id="faq">
+        <div class="section-container">
+            <div class="section-header">
+                <h2 class="section-title">Frequently Asked Questions</h2>
+                <p class="section-desc">Everything you need to know about LocalLens.</p>
+            </div>
+            <div class="faq-list">
+                <div class="faq-item">
+                    <button class="faq-question">
+                        Do my photos get uploaded anywhere?
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div class="faq-answer">
+                        <div class="faq-answer-inner">
+                            <strong>No, absolutely not.</strong> Everything runs with ONNX Runtime Web directly in your browser. Your images never leave your device – there are no servers involved in the processing. The only network requests are to load the AI models on first use.
+                        </div>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <button class="faq-question">
+                        Why is it slow on my machine?
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div class="faq-answer">
+                        <div class="faq-answer-inner">
+                            Performance depends on your device's hardware. If you have a modern GPU, ONNX Runtime Web may use WebGL/WebGPU acceleration. On older devices or those without GPU support, processing falls back to CPU, which is significantly slower. Large images also take longer – for best results, try images under 2000px. First runs are slower because models must be downloaded.
+                        </div>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <button class="faq-question">
+                        Is this safe for confidential photos?
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div class="faq-answer">
+                        <div class="faq-answer-inner">
+                            Yes! Since no data leaves your browser, LocalLens is ideal for sensitive or confidential images. For maximum security, you can even disconnect from the internet after the page and models have loaded – everything will continue to work offline.
+                        </div>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <button class="faq-question">
+                        Will there be a desktop or offline version?
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div class="faq-answer">
+                        <div class="faq-answer-inner">
+                            Yes! We're working on <strong>LocalLens PRO</strong>, a standalone desktop application that will include batch processing, higher resolution outputs, and a complete offline bundle with all models included. Stay tuned for updates!
+                        </div>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <button class="faq-question">
+                        What file formats are supported?
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div class="faq-answer">
+                        <div class="faq-answer-inner">
+                            LocalLens supports all common image formats: JPEG, PNG, WebP, GIF (first frame), and BMP. Results are exported as PNG for best quality. For video processing, stay tuned for future updates!
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-brand">LocalLens</div>
+        <p>© <span id="currentYear"></span> LocalLens. Built with on-device AI.</p>
+        <p>No tracking, no cookies, no servers.</p>
+        <p><a href="#faq">Privacy & FAQ</a></p>
+    </footer>
+
+    <!-- Back to Top Button -->
+    <button class="back-to-top" id="backToTop" aria-label="Back to top">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M12 4l-8 8h5v8h6v-8h5l-8-8z"/>
+        </svg>
+    </button>
+
+    <script>
+        // ========================================
+        // MODEL URL CONFIGURATION
+        // Replace these URLs with your actual ONNX model URLs
+        // ========================================
+        const MODEL_URL_SUPER_RES  = "./models/super_res.onnx";
+        const MODEL_URL_LOW_LIGHT  = "./models/low_light_sci.onnx";  // LYT-Net - smaller & better quality
+        const MODEL_URL_BG_REMOVAL = "REPLACE_WITH_BG_REMOVAL_MODEL_URL.onnx";
+        const MODEL_URL_CARTOON    = "REPLACE_WITH_CARTOON_MODEL_URL.onnx";
+        const MODEL_URL_DEPTH      = "REPLACE_WITH_DEPTH_MODEL_URL.onnx";
+
+        const DONATE_URL = "https://buymeacoffee.com/REPLACE_USERNAME";
+
+        // ========================================
+        // TOOL CONFIGURATION
+        // ========================================
+        // Max image size when resize toggle is enabled
+        const RESIZE_MAX_SIZE = 1024;
+
+        const toolsConfig = {
+            superRes: {
+                modelUrl: MODEL_URL_SUPER_RES,
+                name: 'Super-Resolution',
+                upscaleFactor: 4 // RLFN model upscales 4x
+            },
+            lowLight: {
+                modelUrl: MODEL_URL_LOW_LIGHT,
+                name: 'Lighting Fix',
+                //padTo: 8  // LYT-Net transformer needs dimensions divisible by 8
+                //fixedSize: 256  // FLOL uses fixed 256x256 input
+            },
+            bgRemoval: {
+                modelUrl: MODEL_URL_BG_REMOVAL,
+                name: 'Background Removal',
+                outputAlpha: true // Output includes alpha channel
+            },
+            cartoon: {
+                modelUrl: MODEL_URL_CARTOON,
+                name: 'Cartoonizer'
+            },
+            depth: {
+                modelUrl: MODEL_URL_DEPTH,
+                name: '3D Photo',
+                isDepth: true // Single channel depth output
+            }
+        };
+
+        /**
+         * Get maxSize based on toggle state
+         */
+        function getMaxSize(toolKey) {
+            const toggle = document.querySelector(`.resize-toggle[data-tool="${toolKey}"]`);
+            return toggle && toggle.checked ? RESIZE_MAX_SIZE : null;
+        }
+
+        // Cached ONNX sessions
+        const sessions = {
+            superRes: null,
+            lowLight: null,
+            bgRemoval: null,
+            cartoon: null,
+            depth: null
+        };
+
+        // Store loaded images for each tool
+        const loadedImages = {};
+
+        // Store depth data for parallax effect
+        let depthData = null;
+        let depthOriginalImage = null;
+
+        // ========================================
+        // HELPER FUNCTIONS
+        // ========================================
+
+        /**
+         * Check if model URL is configured (not placeholder)
+         */
+        function isModelConfigured(url) {
+            return url && !url.includes('REPLACE_WITH_');
+        }
+
+        /**
+         * Update status display for a tool
+         */
+        function setStatus(toolKey, state, message) {
+            const statusEl = document.querySelector(`.tool-status[data-tool="${toolKey}"]`);
+            if (!statusEl) return;
+            
+            statusEl.className = `tool-status ${state}`;
+            const spinner = state === 'loading' || state === 'running' 
+                ? '<div class="spinner"></div>' 
+                : '';
+            statusEl.innerHTML = `${spinner}<span class="status-text">${message}</span>`;
+        }
+
+        /**
+         * Convert an image to tensor format for ONNX inference
+         * Default: NCHW format, float32, normalized [0,1]
+         * 
+         * @param {HTMLImageElement} img - The input image
+         * @param {number|null} maxSize - Optional max dimension (scales down if larger, keeps original if smaller or null)
+         * @returns {Object} - { tensor, meta } where meta contains dimension info
+         */
+        async function imageToTensor(img, maxSize = null, fixedSize = null, padTo = null) {
+            // Create canvas for processing
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Calculate output dimensions
+            let outW = img.width;
+            let outH = img.height;
+            
+            // If fixedSize is specified, force that exact size (for models with fixed input)
+            if (fixedSize) {
+                outW = fixedSize;
+                outH = fixedSize;
+            }
+            // If maxSize is specified, scale down large images (but don't scale up)
+            else if (maxSize && (img.width > maxSize || img.height > maxSize)) {
+                const scale = Math.min(maxSize / img.width, maxSize / img.height);
+                outW = Math.round(img.width * scale);
+                outH = Math.round(img.height * scale);
+            }
+            
+            // Store original dimensions before padding
+            const origW = outW;
+            const origH = outH;
+            
+            // If padTo is specified, round up to nearest multiple (for transformers that need divisible dims)
+            if (padTo) {
+                outW = Math.ceil(outW / padTo) * padTo;
+                outH = Math.ceil(outH / padTo) * padTo;
+            }
+            
+            canvas.width = outW;
+            canvas.height = outH;
+            
+            // Draw image (scaled if necessary)
+            ctx.drawImage(img, 0, 0, outW, outH);
+            
+            // Get pixel data
+            const imageData = ctx.getImageData(0, 0, outW, outH);
+            const { data } = imageData;
+            
+            // Convert to NCHW format: [1, 3, H, W], normalized [0,1]
+            // NOTE: If your model expects NHWC format [1, H, W, 3], modify the loop below
+            const tensorData = new Float32Array(1 * 3 * outH * outW);
+            
+            for (let y = 0; y < outH; y++) {
+                for (let x = 0; x < outW; x++) {
+                    const pixelIdx = (y * outW + x) * 4;
+                    const tensorIdxBase = y * outW + x;
+                    
+                    // NCHW: channels are stored in separate planes
+                    tensorData[0 * outH * outW + tensorIdxBase] = data[pixelIdx + 0] / 255.0; // R
+                    tensorData[1 * outH * outW + tensorIdxBase] = data[pixelIdx + 1] / 255.0; // G
+                    tensorData[2 * outH * outW + tensorIdxBase] = data[pixelIdx + 2] / 255.0; // B
+                }
+            }
+            
+            return {
+                tensor: new ort.Tensor('float32', tensorData, [1, 3, outH, outW]),
+                meta: { width: outW, height: outH, origWidth: origW, origHeight: origH, originalW: img.width, originalH: img.height }
+            };
+        }
+
+        /**
+         * Convert tensor output back to ImageData
+         * Handles NCHW [1,3,H,W] or depth [1,1,H,W] formats
+         */
+        function tensorToImageData(tensor, width, height, isDepth = false, hasAlpha = false) {
+            const data = tensor.data;
+            const imageData = new ImageData(width, height);
+            const pixels = imageData.data;
+            
+            if (isDepth) {
+                // Single channel depth map -> grayscale
+                // Normalize depth values to [0, 255]
+                let minVal = Infinity, maxVal = -Infinity;
+                for (let i = 0; i < data.length; i++) {
+                    minVal = Math.min(minVal, data[i]);
+                    maxVal = Math.max(maxVal, data[i]);
+                }
+                const range = maxVal - minVal || 1;
+                
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const tensorIdx = y * width + x;
+                        const pixelIdx = tensorIdx * 4;
+                        // Normalize and invert (near=bright, far=dark)
+                        const val = Math.round(((data[tensorIdx] - minVal) / range) * 255);
+                        pixels[pixelIdx + 0] = val;
+                        pixels[pixelIdx + 1] = val;
+                        pixels[pixelIdx + 2] = val;
+                        pixels[pixelIdx + 3] = 255;
+                    }
+                }
+            } else {
+                // RGB(A) output from NCHW format
+                const channelSize = width * height;
+                
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const tensorIdx = y * width + x;
+                        const pixelIdx = tensorIdx * 4;
+                        
+                        // Clamp and scale from [0,1] to [0,255]
+                        pixels[pixelIdx + 0] = Math.max(0, Math.min(255, Math.round(data[0 * channelSize + tensorIdx] * 255)));
+                        pixels[pixelIdx + 1] = Math.max(0, Math.min(255, Math.round(data[1 * channelSize + tensorIdx] * 255)));
+                        pixels[pixelIdx + 2] = Math.max(0, Math.min(255, Math.round(data[2 * channelSize + tensorIdx] * 255)));
+                        
+                        if (hasAlpha && tensor.dims[1] >= 4) {
+                            pixels[pixelIdx + 3] = Math.max(0, Math.min(255, Math.round(data[3 * channelSize + tensorIdx] * 255)));
+                        } else {
+                            pixels[pixelIdx + 3] = 255;
+                        }
+                    }
+                }
+            }
+            
+            return imageData;
+        }
+
+        /**
+         * Load ONNX model for a tool (lazy, cached)
+         */
+        async function loadModel(toolKey) {
+            if (sessions[toolKey]) return sessions[toolKey];
+            
+            const config = toolsConfig[toolKey];
+            if (!isModelConfigured(config.modelUrl)) {
+                throw new Error('Model not configured yet. Please set the model URL.');
+            }
+            
+            setStatus(toolKey, 'loading', `Downloading ${config.name} model...`);
+            
+            try {
+                // Add cache buster to model URL
+                const modelUrlWithCacheBust = config.modelUrl + '?v=' + Date.now();
+                
+                // Choose execution providers - WebGPU has best dynamic axes support
+                // Use WASM only - full dynamic axes support, works everywhere
+                const executionProviders = ['wasm'];
+                
+                const session = await ort.InferenceSession.create(modelUrlWithCacheBust, {
+                    executionProviders: executionProviders
+                });
+                sessions[toolKey] = session;
+                
+                // Detect which backend is being used
+                let backend = 'WASM';
+                try {
+                    const sessionHandler = session?.handler?.session?.sessionHandler;
+                    if (sessionHandler?.backend?.glContext) {
+                        backend = 'WebGL';
+                    } else if (sessionHandler?.backend?.device) {
+                        backend = 'WebGPU';
+                    }
+                } catch(e) {}
+                
+                console.log(`Model ${toolKey} loaded on ${backend}. Input: ${session.inputNames}, Output: ${session.outputNames}`);
+                
+                // Store backend info for status display
+                sessions[toolKey + '_backend'] = backend;
+                return session;
+            } catch (err) {
+                throw new Error(`Failed to load model: ${err.message}`);
+            }
+        }
+
+        /**
+         * Run inference for a tool
+         */
+        async function runTool(toolKey) {
+            const config = toolsConfig[toolKey];
+            const img = loadedImages[toolKey];
+            
+            if (!img) {
+                setStatus(toolKey, 'error', 'Please upload an image first.');
+                return;
+            }
+            
+            // Check if model is configured
+            if (!isModelConfigured(config.modelUrl)) {
+                setStatus(toolKey, 'error', 'Model not configured yet. Edit MODEL_URL in the code.');
+                return;
+            }
+            
+            // Disable buttons during processing
+            const runBtn = document.querySelector(`.tool-run-btn[data-tool="${toolKey}"]`);
+            const downloadBtn = document.querySelector(`.tool-download-btn[data-tool="${toolKey}"]`);
+            runBtn.disabled = true;
+            downloadBtn.disabled = true;
+            
+            let inputTensor = null;
+            const tStart = performance.now();
+            
+            try {
+                // Load model
+                console.log(`[${toolKey}] Starting model load...`);
+                const session = await loadModel(toolKey);
+                console.log(`[${toolKey}] Model loaded successfully`);
+                
+                // Get maxSize from toggle and fixedSize/padTo from config
+                const maxSize = getMaxSize(toolKey);
+                const fixedSize = config.fixedSize || null;
+                const padTo = config.padTo || null;
+                const sizeInfo = fixedSize 
+                    ? ` (resized to ${fixedSize}x${fixedSize})` 
+                    : (maxSize ? ` (scaled to max ${maxSize}px)` : '');
+                setStatus(toolKey, 'running', `Processing image${sizeInfo}...`);
+                
+                // Allow UI to update before heavy processing
+                await new Promise(resolve => setTimeout(resolve, 50));
+                
+                // Prepare input tensor
+                console.log(`[${toolKey}] Creating input tensor...`);
+                const { tensor, meta } = await imageToTensor(img, maxSize, fixedSize, padTo);
+                inputTensor = tensor;
+                
+                console.log(`[${toolKey}] Processing ${meta.width}x${meta.height} image...`);
+                
+                // Get input name from model (usually 'input' or similar)
+                const inputName = session.inputNames[0];
+                const feeds = { [inputName]: tensor };
+                
+                // Run inference
+                console.log(`[${toolKey}] Starting inference...`);
+                const results = await session.run(feeds);
+                console.log(`[${toolKey}] Inference complete`);
+                
+                // Get output (first output tensor)
+                const outputName = session.outputNames[0];
+                const outputTensor = results[outputName];
+                
+                // Determine output dimensions from model output tensor
+                const outputH = outputTensor.dims[2];
+                const outputW = outputTensor.dims[3];
+                
+                console.log(`Input: ${meta.width}x${meta.height} -> Output: ${outputW}x${outputH}`);
+                
+                // Allow UI to breathe
+                await new Promise(resolve => setTimeout(resolve, 10));
+                
+                // Convert to ImageData
+                const imageData = tensorToImageData(
+                    outputTensor, 
+                    outputW, 
+                    outputH, 
+                    config.isDepth,
+                    config.outputAlpha
+                );
+                
+                // Draw to canvas
+                const canvas = document.querySelector(`canvas[data-tool="${toolKey}"]`);
+                
+                // If fixedSize was used, scale output back to original image size
+                if (fixedSize && !config.upscaleFactor) {
+                    // Create temp canvas with model output
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = outputW;
+                    tempCanvas.height = outputH;
+                    tempCanvas.getContext('2d').putImageData(imageData, 0, 0);
+                    
+                    // Draw scaled to original size
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    canvas.getContext('2d').drawImage(tempCanvas, 0, 0, img.width, img.height);
+                } 
+                // If padTo was used, crop output back to original dimensions
+                else if (padTo && (meta.origWidth !== outputW || meta.origHeight !== outputH)) {
+                    // Create temp canvas with model output
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = outputW;
+                    tempCanvas.height = outputH;
+                    tempCanvas.getContext('2d').putImageData(imageData, 0, 0);
+                    
+                    // Crop to original dimensions (before padding)
+                    canvas.width = meta.origWidth;
+                    canvas.height = meta.origHeight;
+                    canvas.getContext('2d').drawImage(tempCanvas, 0, 0, meta.origWidth, meta.origHeight, 0, 0, meta.origWidth, meta.origHeight);
+                }
+                else {
+                    canvas.width = outputW;
+                    canvas.height = outputH;
+                    canvas.getContext('2d').putImageData(imageData, 0, 0);
+                }
+                canvas.classList.add('has-result');
+                
+                // Hide placeholder
+                const placeholder = document.querySelector(`.output-placeholder[data-tool="${toolKey}"]`);
+                if (placeholder) placeholder.style.display = 'none';
+                
+                // Store depth data for parallax effect (make a copy to avoid holding tensor reference)
+                if (config.isDepth) {
+                    depthData = new Float32Array(outputTensor.data);
+                    depthOriginalImage = img;
+                }
+                
+                const backendUsed = sessions[toolKey + '_backend'] || 'CPU';
+                const gpuIcon = backendUsed.includes('GPU') || backendUsed.includes('WebGL') ? '⚡' : '💻';
+                const totalSeconds = ((performance.now() - tStart) / 1000).toFixed(2);
+                setStatus(toolKey, 'done', `Done in ${totalSeconds}s! ${gpuIcon} Processed with ${backendUsed}`);
+                downloadBtn.disabled = false;
+                
+                console.log(`${toolKey} completed successfully`);
+                
+            } catch (err) {
+                console.error(`Error in ${toolKey}:`, err);
+                // Handle different error types
+                let errorMsg = String(err.message || err);
+                if (errorMsg.includes('Aborted') || errorMsg.includes('memory')) {
+                    errorMsg = 'Out of memory. Try a smaller image or refresh the page.';
+                } else if (/^\d+$/.test(errorMsg)) {
+                    // Numeric error code from ONNX Runtime
+                    errorMsg = `ONNX Runtime error (code: ${errorMsg}). Try enabling "Limit input size" toggle.`;
+                }
+                setStatus(toolKey, 'error', errorMsg);
+            } finally {
+                // Clean up tensors to free memory
+                if (inputTensor) {
+                    try { inputTensor.dispose?.(); } catch(e) {}
+                }
+                // Force garbage collection hint
+                if (window.gc) window.gc();
+            }
+            
+            runBtn.disabled = false;
+        }
+
+        /**
+         * Download canvas result
+         */
+        function downloadResult(toolKey) {
+            const canvas = document.querySelector(`canvas[data-tool="${toolKey}"]`);
+            if (!canvas || !canvas.classList.contains('has-result')) return;
+            
+            const link = document.createElement('a');
+            link.download = `locallens-${toolKey}-result.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        /**
+         * Handle file selection for a tool
+         */
+        function handleFileSelect(toolKey, file) {
+            if (!file || !file.type.startsWith('image/')) {
+                setStatus(toolKey, 'error', 'Please select a valid image file.');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    loadedImages[toolKey] = img;
+                    
+                    // Update preview
+                    const preview = document.querySelector(`.input-preview[data-tool="${toolKey}"]`);
+                    preview.querySelector('img').src = e.target.result;
+                    preview.querySelector('.input-preview-name').textContent = file.name;
+                    preview.querySelector('.input-preview-size').textContent = 
+                        `${img.width} × ${img.height} • ${(file.size / 1024).toFixed(1)} KB`;
+                    preview.classList.add('has-image');
+                    
+                    // Enable run button
+                    document.querySelector(`.tool-run-btn[data-tool="${toolKey}"]`).disabled = false;
+                    
+                    // Reset output
+                    const canvas = document.querySelector(`canvas[data-tool="${toolKey}"]`);
+                    canvas.classList.remove('has-result');
+                    const placeholder = document.querySelector(`.output-placeholder[data-tool="${toolKey}"]`);
+                    if (placeholder) placeholder.style.display = '';
+                    document.querySelector(`.tool-download-btn[data-tool="${toolKey}"]`).disabled = true;
+                    
+                    setStatus(toolKey, 'idle', 'Image loaded. Click the button to process.');
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        /**
+         * Clear image from a tool
+         */
+        function clearImage(toolKey) {
+            delete loadedImages[toolKey];
+            
+            const preview = document.querySelector(`.input-preview[data-tool="${toolKey}"]`);
+            preview.classList.remove('has-image');
+            preview.querySelector('img').src = '';
+            
+            document.querySelector(`.tool-run-btn[data-tool="${toolKey}"]`).disabled = true;
+            
+            const canvas = document.querySelector(`canvas[data-tool="${toolKey}"]`);
+            canvas.classList.remove('has-result');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const placeholder = document.querySelector(`.output-placeholder[data-tool="${toolKey}"]`);
+            if (placeholder) placeholder.style.display = '';
+            
+            document.querySelector(`.tool-download-btn[data-tool="${toolKey}"]`).disabled = true;
+            
+            setStatus(toolKey, 'idle', 'Ready. Upload an image to begin.');
+        }
+
+        /**
+         * Setup drag & drop and file input for all tools
+         */
+        function setupDropZones() {
+            document.querySelectorAll('.drop-zone').forEach(zone => {
+                const toolKey = zone.dataset.tool;
+                const fileInput = zone.querySelector('input[type="file"]');
+                const btn = zone.querySelector('.btn');
+                
+                // Click to open file dialog
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    fileInput.click();
+                });
+                zone.addEventListener('click', () => fileInput.click());
+                
+                // File input change
+                fileInput.addEventListener('change', (e) => {
+                    if (e.target.files[0]) {
+                        handleFileSelect(toolKey, e.target.files[0]);
+                    }
+                });
+                
+                // Drag events
+                zone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    zone.classList.add('drag-over');
+                });
+                
+                zone.addEventListener('dragleave', () => {
+                    zone.classList.remove('drag-over');
+                });
+                
+                zone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    zone.classList.remove('drag-over');
+                    if (e.dataTransfer.files[0]) {
+                        handleFileSelect(toolKey, e.dataTransfer.files[0]);
+                    }
+                });
+            });
+        }
+
+        /**
+         * Setup remove buttons for image previews
+         */
+        function setupRemoveButtons() {
+            document.querySelectorAll('.input-preview .btn-remove').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const preview = btn.closest('.input-preview');
+                    const toolKey = preview.dataset.tool;
+                    clearImage(toolKey);
+                });
+            });
+        }
+
+        /**
+         * Setup run buttons
+         */
+        function setupRunButtons() {
+            document.querySelectorAll('.tool-run-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const toolKey = btn.dataset.tool;
+                    runTool(toolKey);
+                });
+            });
+        }
+
+        /**
+         * Setup download buttons
+         */
+        function setupDownloadButtons() {
+            document.querySelectorAll('.tool-download-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const toolKey = btn.dataset.tool;
+                    downloadResult(toolKey);
+                });
+            });
+        }
+
+        /**
+         * Setup navigation scroll spy
+         */
+        function setupNavScrollSpy() {
+            const sections = ['hero', 'tools', 'pro', 'faq'];
+            const navLinks = document.querySelectorAll('.nav-links a');
+            
+            function updateActiveLink() {
+                const scrollY = window.scrollY + 100;
+                
+                let currentSection = sections[0];
+                for (const sectionId of sections) {
+                    const section = document.getElementById(sectionId);
+                    if (section && section.offsetTop <= scrollY) {
+                        currentSection = sectionId;
+                    }
+                }
+                
+                navLinks.forEach(link => {
+                    link.classList.remove('active');
+                    if (link.getAttribute('href') === `#${currentSection}`) {
+                        link.classList.add('active');
+                    }
+                });
+            }
+            
+            window.addEventListener('scroll', updateActiveLink, { passive: true });
+            updateActiveLink();
+        }
+
+        /**
+         * Setup mobile navigation toggle
+         */
+        function setupMobileNav() {
+            const toggle = document.querySelector('.nav-mobile-toggle');
+            const links = document.querySelector('.nav-links');
+            
+            toggle.addEventListener('click', () => {
+                links.classList.toggle('open');
+            });
+            
+            // Close menu when clicking a link
+            links.querySelectorAll('a').forEach(link => {
+                link.addEventListener('click', () => {
+                    links.classList.remove('open');
+                });
+            });
+        }
+
+        /**
+         * Setup FAQ accordions
+         */
+        function setupFAQ() {
+            document.querySelectorAll('.faq-question').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const item = btn.closest('.faq-item');
+                    const wasOpen = item.classList.contains('open');
+                    
+                    // Close all
+                    document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('open'));
+                    
+                    // Open clicked (if it wasn't already open)
+                    if (!wasOpen) {
+                        item.classList.add('open');
+                    }
+                });
+            });
+        }
+
+        /**
+         * Setup donate button
+         */
+        function setupDonateButton() {
+            document.getElementById('donateButton').addEventListener('click', () => {
+                window.open(DONATE_URL, '_blank');
+            });
+        }
+
+        /**
+         * Setup 3D photo parallax effect
+         */
+        function setupDepthParallax() {
+            const depthWrap = document.querySelector('.depth-result-wrap[data-tool="depth"]');
+            const canvas = depthWrap.querySelector('canvas');
+            
+            depthWrap.addEventListener('mousemove', (e) => {
+                if (!canvas.classList.contains('has-result')) return;
+                
+                const rect = depthWrap.getBoundingClientRect();
+                const x = (e.clientX - rect.left) / rect.width - 0.5; // -0.5 to 0.5
+                const y = (e.clientY - rect.top) / rect.height - 0.5;
+                
+                // Apply parallax shift (max 10px)
+                const shiftX = x * 20;
+                const shiftY = y * 20;
+                canvas.style.transform = `translate(${shiftX}px, ${shiftY}px)`;
+            });
+            
+            depthWrap.addEventListener('mouseleave', () => {
+                canvas.style.transform = '';
+            });
+        }
+
+        /**
+         * Set current year in footer
+         */
+        function setCurrentYear() {
+            document.getElementById('currentYear').textContent = new Date().getFullYear();
+        }
+
+        /**
+         * Back to Top Button
+         */
+        function setupBackToTop() {
+            const backToTopBtn = document.getElementById('backToTop');
+            
+            // Show/hide button based on scroll position
+            function toggleBackToTop() {
+                if (window.scrollY > 300) {
+                    backToTopBtn.classList.add('visible');
+                } else {
+                    backToTopBtn.classList.remove('visible');
+                }
+            }
+            
+            // Smooth scroll to top
+            backToTopBtn.addEventListener('click', () => {
+                window.scrollTo({
+                    top: 0,
+                    behavior: 'smooth'
+                });
+            });
+            
+            // Listen for scroll events
+            window.addEventListener('scroll', toggleBackToTop);
+            
+            // Initial check
+            toggleBackToTop();
+        }
+
+        // ========================================
+        // INITIALIZATION
+        // ========================================
+        document.addEventListener('DOMContentLoaded', () => {
+            setupDropZones();
+            setupBackToTop();
+            setupRemoveButtons();
+            setupRunButtons();
+            setupDownloadButtons();
+            setupNavScrollSpy();
+            setupMobileNav();
+            setupFAQ();
+            setupDonateButton();
+            setupDepthParallax();
+            setCurrentYear();
+            
+            console.log('LocalLens initialized. Configure model URLs to enable processing.');
+        });
+    </script>
+</body>
+</html>
+

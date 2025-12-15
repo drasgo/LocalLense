@@ -1,0 +1,257 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Browser ONNX TTS Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+</head>
+<body>
+  <button id="run">Run TTS</button>
+  <p id="status"></p>
+
+<script>
+const ONNX_DIR = "./assets/onnx";
+const STYLE_JSON = "./assets/voice_styles/M1.json";
+const OUT_NAME = "result.wav";
+const TEXT = "Today, I want to talk briefly about how technology quietly reshapes the way we live and work. Most technological change does not arrive as a single dramatic moment. Instead, it unfolds gradually, through small improvements that accumulate over time. A faster tool here, a smarter system there, and suddenly entire workflows look different from what they were just a few years ago. What makes this transformation particularly interesting is that it often happens in the background. We do not always notice the algorithms optimizing our routes, improving image quality, filtering noise from audio, or translating information across languages in real time. Yet these systems steadily remove friction from everyday tasks, allowing people to focus more on creativity, decision-making, and problem-solving. At the same time, this progress raises important questions. How do we ensure that technology remains transparent, reliable, and aligned with human values? How do we design systems that assist rather than replace, augment rather than control? The answers will not come from technology alone. They require thoughtful design, responsible deployment, and continuous dialogue between engineers, policymakers, and society at large. Ultimately, technology is not an end in itself. It is a tool. Its value lies in how effectively it helps people communicate, understand, and build a better future together.";
+const TOTAL_STEP = 5;
+const SPEED = 1.05;
+
+ort.env.wasm.simd = true;
+ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
+
+const statusEl = document.getElementById("status");
+const btn = document.getElementById("run");
+
+const jget = async (url) => (await fetch(url)).json();
+const fget = async (url) => new Uint8Array(await (await fetch(url)).arrayBuffer());
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function encodeWav16(samplesF32, sampleRate) {
+  const n = samplesF32.length;
+  const dataSize = n * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const writeStr = (off, s) => { for (let i=0;i<s.length;i++) view.setUint8(off+i, s.charCodeAt(i)); };
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let o = 44;
+  for (let i = 0; i < n; i++, o += 2) {
+    let s = Math.max(-1, Math.min(1, samplesF32[i]));
+    view.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return buffer;
+}
+
+function lengthToMask(lengths, maxLen=null) {
+  maxLen = maxLen ?? Math.max(...lengths);
+  const mask = [];
+  for (let i=0;i<lengths.length;i++) {
+    const row = new Float32Array(maxLen);
+    for (let j=0;j<maxLen;j++) row[j] = j < lengths[i] ? 1.0 : 0.0;
+    mask.push([Array.from(row)]);
+  }
+  return mask; // [B,1,T]
+}
+
+function chunkText(text, maxLen=300) {
+  const parts = text.trim().split(/\n\s*\n+/).filter(Boolean);
+  const out = [];
+  for (let p of parts) {
+    const sents = p.trim().split(/(?<=[.!?])\s+/);
+    let cur = "";
+    for (const s of sents) {
+      if ((cur.length ? cur.length + 1 : 0) + s.length <= maxLen) cur += (cur ? " " : "") + s;
+      else { if (cur) out.push(cur.trim()); cur = s; }
+    }
+    if (cur) out.push(cur.trim());
+  }
+  return out.length ? out : [text];
+}
+
+class UnicodeProcessor {
+  constructor(indexer) { this.indexer = indexer; }
+  _preprocessText(t) {
+    t = t.normalize("NFKD").replace(/\s+/g, " ").trim();
+    if (!/[.!?;:,'\"')\]}…]$/.test(t)) t += ".";
+    return t;
+  }
+  call(textList) {
+    const processed = textList.map(t => this._preprocessText(t));
+    const lens = processed.map(t => t.length);
+    const maxLen = Math.max(...lens);
+    const textIds = [];
+    for (let i=0;i<processed.length;i++) {
+      const row = new Array(maxLen).fill(0);
+      const chars = Array.from(processed[i]);
+      for (let j=0;j<chars.length;j++) {
+        const code = chars[j].charCodeAt(0);
+        row[j] = this.indexer[code] ?? 0;
+      }
+      textIds.push(row);
+    }
+    const textMask = lengthToMask(lens, maxLen);
+    return { textIds, textMask };
+  }
+}
+
+function arrayToTensorFloat(array, dims) {
+  const flat = array.flat(Infinity);
+  return new ort.Tensor("float32", Float32Array.from(flat), dims);
+}
+
+function intArrayToTensorInt64(array, dims) {
+  const flat = array.flat(Infinity);
+  return new ort.Tensor("int64", BigInt64Array.from(flat.map(x => BigInt(x))), dims);
+}
+
+async function loadSession(url) {
+  // cache-bust optional: + "?v=" + Date.now()
+  return await ort.InferenceSession.create(url, { executionProviders: ["wasm"] });
+}
+
+btn.onclick = async () => {
+  try {
+    btn.disabled = true;
+    statusEl.textContent = "Loading assets...";
+
+    const [cfg, indexer, style] = await Promise.all([
+      jget(`${ONNX_DIR}/tts.json`),
+      jget(`${ONNX_DIR}/unicode_indexer.json`),
+      jget(STYLE_JSON),
+    ]);
+
+    const proc = new UnicodeProcessor(indexer);
+
+    statusEl.textContent = "Loading ONNX models...";
+    const [dp, enc, vec, voc] = await Promise.all([
+      loadSession(`${ONNX_DIR}/duration_predictor.onnx`),
+      loadSession(`${ONNX_DIR}/text_encoder.onnx`),
+      loadSession(`${ONNX_DIR}/vector_estimator.onnx`),
+      loadSession(`${ONNX_DIR}/vocoder.onnx`),
+    ]);
+
+    const bsz = 1;
+    const styleTTL = new ort.Tensor("float32",
+      Float32Array.from(style.style_ttl.data.flat(Infinity)),
+      style.style_ttl.dims
+    );
+    const styleDP = new ort.Tensor("float32",
+      Float32Array.from(style.style_dp.data.flat(Infinity)),
+      style.style_dp.dims
+    );
+
+    statusEl.textContent = "Synthesizing...";
+    const sampleRate = cfg.ae.sample_rate;
+    const baseChunkSize = cfg.ae.base_chunk_size;
+    const chunkCompressFactor = cfg.ttl.chunk_compress_factor;
+    const ldim = cfg.ttl.latent_dim;
+
+    let wavCat = [];
+    let durCat = 0;
+    const chunks = chunkText(TEXT);
+
+    const t0 = performance.now();
+
+    for (const chunk of chunks) {
+      const { textIds, textMask } = proc.call([chunk]);
+      const T = textIds[0].length;
+
+      const textIdsTensor = intArrayToTensorInt64(textIds, [bsz, T]);
+      const textMaskTensor = arrayToTensorFloat(textMask, [bsz, 1, T]);
+
+      const dpOut = await dp.run({
+        text_ids: textIdsTensor,
+        style_dp: styleDP,
+        text_mask: textMaskTensor
+      });
+      const dur = Array.from(dpOut.duration.data).map(d => d / SPEED);
+
+      const encOut = await enc.run({
+        text_ids: textIdsTensor,
+        style_ttl: styleTTL,
+        text_mask: textMaskTensor
+      });
+      const textEmb = encOut.text_emb;
+
+      const wavLenMax = Math.max(...dur) * sampleRate;
+      const wavLengths = dur.map(d => Math.floor(d * sampleRate));
+      const latentSize = baseChunkSize * chunkCompressFactor;
+      const latentLen = Math.floor((wavLenMax + latentSize - 1) / latentSize);
+      const latentDim = ldim * chunkCompressFactor;
+
+      // latent_mask
+      const latentLengths = wavLengths.map(len => Math.floor((len + latentSize - 1) / latentSize));
+      const latentMaskArr = lengthToMask(latentLengths);
+      const latentMaskTensor = arrayToTensorFloat(latentMaskArr, [bsz, 1, latentLen]);
+
+      // noisy_latent init
+      const noisy = new Float32Array(bsz * latentDim * latentLen);
+      for (let i=0;i<noisy.length;i++) noisy[i] = (Math.random() * 2 - 1) * 0.1;
+
+      const totalStepTensor = arrayToTensorFloat(new Array(bsz).fill(TOTAL_STEP), [bsz]);
+
+      for (let step=0; step<TOTAL_STEP; step++) {
+        const currentStepTensor = arrayToTensorFloat(new Array(bsz).fill(step), [bsz]);
+        const ve = await vec.run({
+          noisy_latent: new ort.Tensor("float32", noisy, [bsz, latentDim, latentLen]),
+          text_emb: textEmb,
+          style_ttl: styleTTL,
+          text_mask: textMaskTensor,
+          latent_mask: latentMaskTensor,
+          total_step: totalStepTensor,
+          current_step: currentStepTensor
+        });
+        noisy.set(ve.denoised_latent.data);
+      }
+
+      const vocOut = await voc.run({
+        latent: new ort.Tensor("float32", noisy, [bsz, latentDim, latentLen])
+      });
+
+      const wav = Array.from(vocOut.wav_tts.data);
+      wavCat = wavCat.length ? wavCat.concat(new Array(Math.floor(0.3*sampleRate)).fill(0), wav) : wav;
+      durCat += dur[0] + (wavCat.length ? 0.3 : 0);
+    }
+
+    const t1 = performance.now();
+
+    // trim to predicted length (like your Node code does)
+    const outLen = Math.min(wavCat.length, Math.floor(sampleRate * durCat));
+    const wavF32 = Float32Array.from(wavCat.slice(0, outLen));
+
+    const wavBuf = encodeWav16(wavF32, sampleRate);
+    downloadBlob(new Blob([wavBuf], { type: "audio/wav" }), OUT_NAME);
+
+    statusEl.textContent = `Done. ${(t1 - t0).toFixed(0)} ms. Saved ${OUT_NAME}`;
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = "Error: " + (e?.message || e);
+  } finally {
+    btn.disabled = false;
+  }
+};
+</script>
+</body>
+</html>

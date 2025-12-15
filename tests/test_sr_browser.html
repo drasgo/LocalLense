@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RLFN Browser Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 40px; background: #f5f5f5; }
+        h1 { color: #333; }
+        .row { display: flex; gap: 30px; margin: 20px 0; flex-wrap: wrap; }
+        .box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .box h3 { margin-top: 0; color: #666; }
+        canvas, img { border: 2px solid #ddd; border-radius: 4px; }
+        #status { padding: 16px; border-radius: 8px; margin: 20px 0; }
+        #status.loading { background: #fef3c7; color: #92400e; }
+        #status.success { background: #d1fae5; color: #065f46; }
+        #status.error { background: #fee2e2; color: #991b1b; }
+        .dim { font-size: 14px; color: #0ea5e9; font-weight: bold; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 RLFN Super-Resolution Browser Test</h1>
+    <p>Testing the ONNX model directly in the browser with the same pattern as Python.</p>
+    
+    <div id="status" class="loading">Loading ONNX model...</div>
+    
+    <div class="row">
+        <div class="box">
+            <h3>Input (64×64)</h3>
+            <canvas id="inputCanvas" width="64" height="64"></canvas>
+            <div class="dim" id="inputDim">-</div>
+        </div>
+        <div class="box">
+            <h3>Bilinear (browser)</h3>
+            <canvas id="bilinearCanvas" width="256" height="256"></canvas>
+            <div class="dim" id="bilinearDim">-</div>
+        </div>
+        <div class="box">
+            <h3>RLFN SR (ONNX in browser)</h3>
+            <canvas id="outputCanvas"></canvas>
+            <div class="dim" id="outputDim">-</div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="box">
+            <h3>Python SR (for comparison)</h3>
+            <img src="test_output_sr.png" width="256" height="256">
+            <div class="dim">256×256 (Python)</div>
+        </div>
+    </div>
+
+    <script>
+        const MODEL_URL = "./models/super_res.onnx?" + Date.now();
+        
+        ort.env.wasm.simd = true;
+        ort.env.wasm.numThreads = navigator.hardwareConcurrency;
+
+        function createTestPattern(canvas) {
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            const imageData = ctx.createImageData(w, h);
+            const data = imageData.data;
+
+            // Same pattern as Python test
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const idx = (y * w + x) * 4;
+                    // Default: light gray
+                    let r = 230, g = 230, b = 230;
+                    
+                    // Diagonal lines
+                    if ((x + y) % 8 < 2) {
+                        r = 51; g = 77; b = 204;
+                    }
+                    // Small dots
+                    if (x % 16 === 8 && y % 16 === 8) {
+                        r = 204; g = 51; b = 51;
+                    }
+                    // Thin horizontal lines
+                    if (y % 12 === 0) {
+                        r = 26; g = 26; b = 26;
+                    }
+                    
+                    data[idx] = r;
+                    data[idx + 1] = g;
+                    data[idx + 2] = b;
+                    data[idx + 3] = 255;
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        function bilinearUpscale(srcCanvas, dstCanvas, scale) {
+            dstCanvas.width = srcCanvas.width * scale;
+            dstCanvas.height = srcCanvas.height * scale;
+            const ctx = dstCanvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(srcCanvas, 0, 0, dstCanvas.width, dstCanvas.height);
+        }
+
+        async function canvasToTensor(canvas) {
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const data = imageData.data;
+            const tensorData = new Float32Array(1 * 3 * h * w);
+            
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const pixelIdx = (y * w + x) * 4;
+                    const tensorIdx = y * w + x;
+                    tensorData[0 * h * w + tensorIdx] = data[pixelIdx] / 255.0;
+                    tensorData[1 * h * w + tensorIdx] = data[pixelIdx + 1] / 255.0;
+                    tensorData[2 * h * w + tensorIdx] = data[pixelIdx + 2] / 255.0;
+                }
+            }
+            return new ort.Tensor('float32', tensorData, [1, 3, h, w]);
+        }
+
+        function tensorToCanvas(tensor, canvas) {
+            const [b, c, h, w] = tensor.dims;
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(w, h);
+            const pixels = imageData.data;
+            const data = tensor.data;
+            const channelSize = h * w;
+
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const tensorIdx = y * w + x;
+                    const pixelIdx = tensorIdx * 4;
+                    pixels[pixelIdx] = Math.round(Math.max(0, Math.min(255, data[0 * channelSize + tensorIdx] * 255)));
+                    pixels[pixelIdx + 1] = Math.round(Math.max(0, Math.min(255, data[1 * channelSize + tensorIdx] * 255)));
+                    pixels[pixelIdx + 2] = Math.round(Math.max(0, Math.min(255, data[2 * channelSize + tensorIdx] * 255)));
+                    pixels[pixelIdx + 3] = 255;
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        async function runTest() {
+            const status = document.getElementById('status');
+            const inputCanvas = document.getElementById('inputCanvas');
+            const bilinearCanvas = document.getElementById('bilinearCanvas');
+            const outputCanvas = document.getElementById('outputCanvas');
+
+            try {
+                // Create test pattern
+                createTestPattern(inputCanvas);
+                document.getElementById('inputDim').textContent = '64×64';
+
+                // Bilinear upscale
+                bilinearUpscale(inputCanvas, bilinearCanvas, 4);
+                document.getElementById('bilinearDim').textContent = '256×256 (bilinear)';
+
+                // Load ONNX model
+                status.textContent = 'Loading ONNX model (~1.2MB)...';
+                const session = await ort.InferenceSession.create(MODEL_URL, {
+                    executionProviders: ['wasm']
+                });
+
+                // Run inference
+                status.textContent = 'Running RLFN inference...';
+                const inputTensor = await canvasToTensor(inputCanvas);
+                console.log('Input tensor:', inputTensor.dims);
+
+                const feeds = { [session.inputNames[0]]: inputTensor };
+                const results = await session.run(feeds);
+                const outputTensor = results[session.outputNames[0]];
+                console.log('Output tensor:', outputTensor.dims);
+
+                // Draw output
+                tensorToCanvas(outputTensor, outputCanvas);
+                document.getElementById('outputDim').textContent = 
+                    `${outputTensor.dims[3]}×${outputTensor.dims[2]} (ONNX SR)`;
+
+                status.className = 'success';
+                status.textContent = `✅ Success! Input: 64×64 → Output: ${outputTensor.dims[3]}×${outputTensor.dims[2]} (${outputTensor.dims[2]/64}x upscale)`;
+
+            } catch (e) {
+                console.error(e);
+                status.className = 'error';
+                status.textContent = `❌ Error: ${e.message}`;
+            }
+        }
+
+        runTest();
+    </script>
+</body>
+</html>
+
