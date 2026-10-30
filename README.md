@@ -26,8 +26,12 @@ LocalLens is a privacy-first AI photo editing platform that runs entirely in you
 
 ## Quick Start
 
-1. Open `index.html` in any modern browser
-2. That's it! The UI is fully functional
+1. Serve the folder locally (required for model downloads):
+   ```bash
+   python3 -m http.server 8000
+   ```
+2. Open `http://localhost:8000/index.html` in any modern browser
+3. That's it! The UI is fully functional
 
 To enable AI processing, you need to configure the model URLs (see below).
 
@@ -245,3 +249,11 @@ If LocalLens saves you time, consider [buying me a coffee](https://buymeacoffee.
 
 Built with ❤️ using ONNX Runtime Web
 
+
+
+# TODO Futuri
+
+* background removal: https://huggingface.co/onnx-community/BiRefNet-ONNX
+* image 2 3d object: https://huggingface.co/ashawkey/LGM
+* image 2 anime: https://github.com/TachibanaYoshino/AnimeGANv3?tab=readme-ov-file
+*

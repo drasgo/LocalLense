@@ -1748,6 +1748,17 @@
         }
 
         /**
+         * Resolve a model URL against the current page location.
+         */
+        function resolveModelUrl(url) {
+            try {
+                return new URL(url, window.location.href);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        /**
          * Update status display for a tool
          */
         function setStatus(toolKey, state, message) {
@@ -1759,6 +1770,28 @@
                 ? '<div class="spinner"></div>' 
                 : '';
             statusEl.innerHTML = `${spinner}<span class="status-text">${message}</span>`;
+        }
+
+        /**
+         * Extract and scale the alpha channel from an image, if any.
+         * Returns null when the image is fully opaque.
+         */
+        function extractAlphaMask(img, targetW, targetH) {
+            const canvas = document.createElement('canvas');
+            canvas.width = targetW;
+            canvas.height = targetH;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, targetW, targetH);
+            ctx.drawImage(img, 0, 0, targetW, targetH);
+            const data = ctx.getImageData(0, 0, targetW, targetH).data;
+            const alpha = new Uint8ClampedArray(targetW * targetH);
+            let hasTransparency = false;
+            for (let i = 0, a = 3, p = 0; a < data.length; a += 4, p += 1) {
+                const val = data[a];
+                alpha[p] = val;
+                if (val < 255) hasTransparency = true;
+            }
+            return hasTransparency ? alpha : null;
         }
 
         /**
@@ -1899,6 +1932,11 @@
             if (!isModelConfigured(config.modelUrl)) {
                 throw new Error('Model not configured yet. Please set the model URL.');
             }
+
+            const resolvedUrl = resolveModelUrl(config.modelUrl);
+            if (window.location.protocol === 'file:' && resolvedUrl?.protocol === 'file:') {
+                throw new Error('This page is opened via file:// so the browser blocks model downloads. Serve this folder over HTTP (e.g. "python3 -m http.server") or host the models on a web server with CORS enabled.');
+            }
             
             setStatus(toolKey, 'loading', `Downloading ${config.name} model...`);
             
@@ -2018,6 +2056,16 @@
                     config.isDepth,
                     config.outputAlpha
                 );
+
+                if (toolKey === 'superRes') {
+                    const alphaMask = extractAlphaMask(img, outputW, outputH);
+                    if (alphaMask) {
+                        const pixels = imageData.data;
+                        for (let i = 0, a = 3; i < alphaMask.length; i += 1, a += 4) {
+                            pixels[a] = alphaMask[i];
+                        }
+                    }
+                }
                 
                 // Draw to canvas
                 const canvas = document.querySelector(`canvas[data-tool="${toolKey}"]`);
